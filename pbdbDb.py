@@ -87,6 +87,7 @@ class DB:
         return f
 
     def split(self, splitFn):
+        '''Split this DB into many according to the splitFn.'''
         part = {}
         for r in self.data:
             k = splitFn(r)
@@ -99,11 +100,13 @@ class DB:
         return dbs
 
     def period(self, binId):
+        '''Return range corresponding to the bin ID.'''
         e = 4500 if binId == len(self.timeSplits) else self.timeSplits[binId]
         l = 0 if binId == 0 else self.timeSplits[binId-1]
         return (e, l)
 
     def speciesByTime(self):
+        '''Return a list of species occurring in each time bin.'''
         bins = [[] for _ in range(len(self.timeSplits)+1)]
         for sp, binIds in self.bins.items():
             for binId in binIds:
