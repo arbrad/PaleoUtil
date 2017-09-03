@@ -250,7 +250,7 @@ def testPCA():
 def speciesOverTime(db, degrees=None, modifier=''):
     '''Construct a plot of species-over-time by region of the world.
     Set modifer='paleo' to use paleocoordinates instead of modern
-    coordinates.'''
+    coordinates. By default, the world is treated as one region.'''
     if degrees:
         dbs = db.split(db.splitByLocation(degrees=degrees, modifier=modifier))
     else:
