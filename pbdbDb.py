@@ -107,7 +107,7 @@ class DB:
         '''Fossil range of species.'''
         return self.range[species]
 
-    def period(self, binId):
+    def interval(self, binId):
         '''Range corresponding to bin ID.'''
         e = 4500 if binId == len(self.timeSplits) else self.timeSplits[binId]
         l = 0 if binId == 0 else self.timeSplits[binId-1]
@@ -121,26 +121,26 @@ class DB:
                 bins[binId].append(sp)
         return bins
 
-    def computePCA(self, fields=['environment','lithology*']):
+    def computePCA(self, fields=['lithology*'], exclude=None):
         '''Fit PCA to dataset, using values from fields as Boolean dimensions.'''
         # observation dimensions: descriptors used in fields across dataset
-        self.dims = list(self.valuesInFieldsOfData(fields))
+        self.dims = list(self.valuesInFieldsOfData(fields, exclude))
         self.dims.sort()
         self.dim2i = {self.dims[i]:i for i in range(len(self.dims))}
         # data: frequency of observations per species
         sp = set()
         for r in self.data:
             sp.add(self.name(r))
-        self.species = list(sp)
-        self.species.sort()
-        self.sp2i = {self.species[i]:i for i in range(len(self.species))}
+        self.species_ = list(sp)
+        self.species_.sort()
+        self.sp2i = {self.species_[i]:i for i in range(len(self.species_))}
         # construct observation matrix
-        self.Obs = np.zeros((len(self.species), len(self.dims)))
-        nocc = [0 for _ in self.species]
+        self.Obs = np.zeros((len(self.species_), len(self.dims)))
+        nocc = [0 for _ in self.species_]
         for r in self.data:
             si = self.sp2i[self.name(r)]
             nocc[si] += 1
-            for dim in self.valuesInFields(fields, r):
+            for dim in self.valuesInFields(fields, r, exclude):
                 self.Obs[si,self.dim2i[dim]] += 1
         for r in range(self.Obs.shape[0]):
             for c in range(self.Obs.shape[1]):
@@ -164,25 +164,35 @@ class DB:
 
     # Typical coloring function constructors
     def colorByTime(self, extreme=min):
-        return lambda sp: extreme(self.bins[sp])
+        return lambda sp: np.mean(self.fossilRange(sp))
     def colorBySpecies(self, species):
         return lambda sp: int(sp in species)
 
     # Typical species-subset constructor for plotting
-    def fieldSubset(self, fields, value):
+    def fieldSubset(self, fields, value, pol=True):
         '''Subset function constructor.'''
         sp = set()
         for r in self.data:
-            if value in self.valuesInFields(fields, r):
+            if (value in self.valuesInFields(fields, r)) == pol:
                 sp.add(self.name(r))
         return sp 
+    def fieldSubsets(self, fields, species=None):
+        '''Constructs value->set(species) map.'''
+        vmap = {}
+        for r in self.data:
+            sp = self.name(r)
+            if sp == '' or (species and sp not in species): continue
+            for v in self.valuesInFields(fields, r):
+                if v not in vmap: vmap[v] = set()
+                vmap[v].add(sp)
+        return vmap
     
     def plot(self, components=[0,1], colorOf=None, species=None, dimThresh=0.3):
         '''Plot projection of (subset of) dataset onto principal components.'''
         assert len(components) < 5
         sfm, sfn = [(1,1), (2,2), (2,3)][len(components)-2]
         # select rows: subset if species list is given
-        rows = list(range(len(self.species)))
+        rows = list(range(len(self.species_)))
         if species: rows = [self.sp2i[sp] for sp in species]
         # project
         P = self.pca.transform(self.Obs[rows,:])
@@ -190,7 +200,7 @@ class DB:
         color = None
         if colorOf:
             color = []
-            for sp in self.species:
+            for sp in self.species_:
                 if not species or sp in species:
                     color.append(colorOf(sp))
         # draw each plot
@@ -206,7 +216,7 @@ class DB:
             else:
                 c = None
             # plot
-            im = ax.scatter(a,b,c=c,cmap=mplt.cm.nipy_spectral,marker='.')
+            im = ax.scatter(a,b,c=c,cmap=mplt.cm.jet,marker='.')
             if color: plt.colorbar(im)
             # add primary contributing dimensions as vectors
             for j in range(len(self.dims)):
@@ -214,6 +224,7 @@ class DB:
                     u,v = (self.pca.components_[a,j] for a in comps)
                     ax.quiver(0,0,u,v,angles='xy',scale_units='xy',scale=1,width=.005,color='red')
                     ax.annotate(self.dims[j], (u,v), color='red')
+            ax.set_title(str(comps))
 
     def name(self, r):
         if self.taxaName not in r: return ''
@@ -233,18 +244,18 @@ class DB:
             if x not in exclude:
                 rv.append(x)
         return rv
-    def valuesInFieldsOfData(self, fields):
+    def valuesInFieldsOfData(self, fields, exclude=None):
         values = set()
         for r in self.data:
-            for v in self.valuesInFields(fields, r):
+            for v in self.valuesInFields(fields, r, exclude):
                 values.add(v)
         return values
-    def valuesInFields(self, fields, r):
+    def valuesInFields(self, fields, r, exclude=None):
         if type(fields) != list: fields = [fields]
         values = set()
         for ff in fields:
             for f in self.expand(ff):
-                for v in self.values(r[f]):
+                for v in self.values(r[f], exclude):
                     values.add(v)
         return values
 
@@ -285,9 +296,9 @@ def speciesOverTime(db, degrees=None, modifier='', byBin=False, cutoffThresh=.05
         if byBin:
             # count by time bins, but normalize to species/my
             z = db.speciesByTime()
-            x = [-db.period(i)[1] for i in range(len(z))]
-            # normalize to species/my, with a minimum of 1 my per period
-            y = [len(s)/max(1,db.period(i)[0]-db.period(i)[1]) for 
+            x = [-db.interval(i)[1] for i in range(len(z))]
+            # normalize to species/my, with a minimum of 1 my per interval
+            y = [len(s)/max(1,db.interval(i)[0]-db.interval(i)[1]) for 
                  i, s in enumerate(z)]
         else:
             # use fossil ranges explicitly, by my
@@ -313,11 +324,11 @@ def speciesOverTime(db, degrees=None, modifier='', byBin=False, cutoffThresh=.05
         if len(x) > 1:
             weights = [1 for _ in x]
             if byBin:
-                # weight by bin period, taking care of final long one
-                periods = [db.period(i)[0]-db.period(i)[1] for i in range(len(y))]
-                maxW = max(periods[:-1])
-                periods[-1] = min(maxW, periods[-1])
-                weights = periods
+                # weight by bin interval, taking care of final long one
+                intervals = [db.interval(i)[0]-db.interval(i)[1] for i in range(len(y))]
+                maxW = max(intervals[:-1])
+                intervals[-1] = min(maxW, intervals[-1])
+                weights = intervals
             lr.fit(np.array([[v] for v in x]), np.array(y), weights)
             a, b = lr.coef_, lr.intercept_
             ax.plot([x[0],x[-1]], [b,b+a*x[-1]])
