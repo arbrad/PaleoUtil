@@ -14,13 +14,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import re
 from sklearn.decomposition import PCA
+from sklearn.linear_model import LinearRegression
 
 class DB:
     '''Holds and analyzes PBDB dataset.'''
     
     # geneeral setup
-    # working directory
-    wd = '../../Paleo/Simpson/Corals/'
+    # resource directory
+    rd = 'resources/'
     # fields to exclude from dataset
     excludeFields = re.compile('descript|comments|basis')
     # descriptors to exclude
@@ -30,20 +31,24 @@ class DB:
                          'yellow','green','blue','brown','black','gray',
                          'red or brown','white'])
     
-    def __init__(self,
-                 db='pbdb_animalia_marine_090217.csv',
+    def __init__(self, db,
                  time='time.csv', timeLevel=4,
-                 taxaName='accepted_name'):
+                 taxaName='accepted_name',
+                 data=None):
         self.taxaName = taxaName
         # dataset
-        with open(DB.wd+db, encoding='utf-8') as f:
-            self.data = []
-            for r in csv.DictReader(f):
-                if self.name(r) != '':
-                    rr = {f:v for f,v in r.items() if not DB.excludeFields.search(f)}
-                    self.data.append(rr)
+        if data:
+            self.data = data
+        else:
+            with open(db, encoding='utf-8') as f:
+                self.data = []
+                for r in csv.DictReader(f):
+                    if self.name(r) != '':
+                        rr = {f:v for f,v in r.items() if not DB.excludeFields.search(f)}
+                        self.data.append(rr)
         # time bins
-        with open(DB.wd+time) as f:
+        self.timeLevel = timeLevel
+        with open(DB.rd+time) as f:
             my = [float(t['max_ma']) for t in csv.DictReader(f) if 
                   int(t['scale_level']) == timeLevel]
             my.sort()
@@ -64,7 +69,47 @@ class DB:
             lb = bisect.bisect_left(self.timeSplits, e)
             assert lb <= eb
             self.bins[sp] = list(range(lb,eb+1))
-            
+    
+    # Typical splitting function
+    def splitByLocation(self, degrees=30, modifier=''):
+        latstr, lngstr = modifier+'lat', modifier+'lng'
+        def f(r):
+            try:
+                lat, lng = float(r[latstr]), float(r[lngstr])
+                if lat > 90: lat -= 180
+                if lat <= -90: lat += 180
+                if lng > 90: lng -= 180
+                if lng <= -90: lng += 180
+                mlat, mlng = math.ceil(lat/degrees), math.ceil(lng/degrees)
+                return (mlat, mlng)
+            except:
+                return 'No location'
+        return f
+
+    def split(self, splitFn):
+        part = {}
+        for r in self.data:
+            k = splitFn(r)
+            if k not in part: part[k] = []
+            part[k].append(r)
+        dbs = {}
+        for k, db in part.items():
+            dbs[k] = DB(db=None, timeLevel=self.timeLevel,
+                        taxaName=self.taxaName, data=db)
+        return dbs
+
+    def period(self, binId):
+        e = 4500 if binId == len(self.timeSplits) else self.timeSplits[binId]
+        l = 0 if binId == 0 else self.timeSplits[binId-1]
+        return (e, l)
+
+    def speciesByTime(self):
+        bins = [[] for _ in range(len(self.timeSplits)+1)]
+        for sp, binIds in self.bins.items():
+            for binId in binIds:
+                bins[binId].append(sp)
+        return bins
+
     def computePCA(self, fields=['environment','lithology*']):
         '''Fit PCA to dataset, using values from fields as Boolean dimensions.'''
         # observation dimensions: descriptors used in fields across dataset
@@ -124,7 +169,7 @@ class DB:
     def plot(self, components=[0,1], colorOf=None, species=None, dimThresh=0.3):
         '''Plot projection of (subset of) dataset onto principal components.'''
         assert len(components) < 5
-        subfig = [[111], [221,222,223,224], [231,232,233,234,235,236]][len(components)-2]
+        sfm, sfn = [(1,1), (2,2), (2,3)][len(components)-2]
         # select rows: subset if species list is given
         rows = list(range(len(self.species)))
         if species: rows = [self.sp2i[sp] for sp in species]
@@ -141,7 +186,7 @@ class DB:
         fig = plt.figure()
         for i, comps in enumerate(itertools.combinations(components,2)):
             a, b = P[:,comps[0]], P[:,comps[1]]
-            ax = fig.add_subplot(subfig[i])
+            ax = fig.add_subplot(sfm, sfn, i+1)
             # emphasize higher-valued colors
             if color:
                 x = list(zip(color,a,b))
@@ -160,6 +205,7 @@ class DB:
                     ax.annotate(self.dims[j], (u,v), color='red')
 
     def name(self, r):
+        if self.taxaName not in r: return ''
         return r[self.taxaName]
 
     def expand(self, field):
@@ -191,9 +237,53 @@ class DB:
                     values.add(v)
         return values
 
-def test():
-    db = DB('scler.082417a1.csv')
+def testPCA():
+    db = DB('../../Paleo/Simpson/Corals/scler.082417a1.csv')
     db.computePCA()
     db.components()
     db.plot([0,1,2], db.colorByTime(), db.fieldSubset('order','Scleractinia'))
     return db
+
+def speciesOverTime(db, degrees=None, modifier=''):
+    '''Construct a plot of species-over-time by region of the world.
+    Set modifer='paleo' to use paleocoordinates instead of modern
+    coordinates.'''
+    if degrees:
+        dbs = db.split(db.splitByLocation(degrees=degrees, modifier=modifier))
+    else:
+        dbs = {(0,0):db}
+    if 'No location' in dbs:
+        print('No locations:', len(dbs['No location'].data))
+        del dbs['No location']
+    keys = set(dbs.keys())
+    if degrees:
+        loci = list(range(math.ceil(-89/degrees), math.ceil(90/degrees)+1))
+        for x in loci:
+            for y in loci:
+                k = (x, y)
+                if k not in keys:
+                    keys.add(k)
+    keys = list(keys)
+    keys.sort(key=lambda x: (-x[0], x[1]))
+    n = round(len(keys)**0.5)
+    fig = plt.figure()
+    for i, loc in enumerate(keys):
+        if loc not in dbs: continue
+        db = dbs[loc]
+        ax = fig.add_subplot(n, n, i+1)
+        z = db.speciesByTime()
+        x = [-db.period(i)[1] for i in range(len(z))]
+        y = [len(s) for s in z]
+        ax.plot(x, y, '.')
+        lr = LinearRegression()
+        fz = 0
+        for i in range(len(y)-1,-1,-1):
+            if y[i]:
+                fz = i+1
+                break
+        x, y = x[:fz], y[:fz]
+        lr.fit(np.array([[v] for v in x]), np.array(y))
+        a, b = lr.coef_, lr.intercept_
+        ax.plot([x[0],x[-1]], [b,b+a*x[-1]])
+        ax.set_title(str(loc))
+        
