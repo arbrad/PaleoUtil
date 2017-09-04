@@ -32,7 +32,7 @@ class DB:
                          'red or brown','white'])
     
     def __init__(self, db,
-                 time='time.csv', timeLevel=4,
+                 time='time.csv', timeLevel=5,
                  taxaName='accepted_name',
                  data=None):
         self.taxaName = taxaName
@@ -145,6 +145,7 @@ class DB:
         for r in range(self.Obs.shape[0]):
             for c in range(self.Obs.shape[1]):
                 self.Obs[r,c] /= nocc[r]
+                assert self.Obs[r,c] <= 1
         # compute PCA
         self.pca = PCA(whiten=True)
         self.pca.fit(self.Obs)
@@ -163,14 +164,26 @@ class DB:
             print('%2d %.2f %s'%(r,self.pca.explained_variance_ratio_[r],', '.join(dims)))
 
     # Typical coloring function constructors
-    def colorByTime(self, extreme=min):
-        return lambda sp: np.mean(self.fossilRange(sp))
+    def colorByTime(self, summary=np.mean, start=4000):
+        def color(sp):
+            try:
+                rng = self.fossilRange(sp)
+                if rng[1] > start: return start
+                return summary(rng)
+            except:
+                return -1
+        return color
     def colorBySpecies(self, species):
         return lambda sp: int(sp in species)
 
     # Typical species-subset constructor for plotting
     def fieldSubset(self, fields, value, pol=True):
         '''Subset function constructor.'''
+        if not hasattr(self, 'fieldSubset_'):
+            self.fieldSubset_ = {}
+        key = str(fields) + ':' + str(value) + ':' + str(pol)
+        if key in self.fieldSubset_:
+            return self.fieldSubset_[key]
         sp = set()
         if type(value) != str:
             value = set(value)
@@ -179,6 +192,7 @@ class DB:
                  bool(value & self.valuesInFields(fields, r)) == pol)
                 or (value in self.valuesInFields(fields, r)) == pol):
                 sp.add(self.name(r))
+        self.fieldSubset_[key] = sp
         return sp 
     def fieldSubsets(self, fields, species=None):
         '''Constructs value->set(species) map.'''
@@ -193,12 +207,7 @@ class DB:
     
     def plot(self, components=[0,1], colorOf=None, species=None, dimThresh=0.3):
         '''Plot projection of (subset of) dataset onto principal components.'''
-        assert len(components) < 5
-        sfm, sfn = [(1,1), (2,2), (2,3)][len(components)-2]
-        # select rows: subset if species list is given
-        rows = list(range(len(self.species_)))
-        if species: rows = [self.sp2i[sp] for sp in species]
-        # project
+        rows = self.speciesRows(species)
         P = self.pca.transform(self.Obs[rows,:])
         # color labels
         color = None
@@ -207,21 +216,45 @@ class DB:
             for sp in self.species_:
                 if not species or sp in species:
                     color.append(colorOf(sp))
+        # define scatter function
+        def points(x, y):
+            return P[:,x], P[:,y], None, color
+        self.plotPCA(components, dimThresh, points)
+
+    def plotPCA(self, components, dimThresh, points):            
         # draw each plot
+        assert len(components) < 5
+        sfm, sfn = [(1,1), (2,2), (2,3)][len(components)-2]
         fig = plt.figure()
         for i, comps in enumerate(itertools.combinations(components,2)):
-            a, b = P[:,comps[0]], P[:,comps[1]]
+            a, b, covs, c = points(comps[0], comps[1])
             ax = fig.add_subplot(sfm, sfn, i+1)
             # emphasize higher-valued colors
-            if color:
-                x = list(zip(color,a,b))
+            if c:
+                hasCovs = covs != None
+                if not hasCovs: covs = [None for _ in a]
+                x = list(zip(c,a,b,covs))
                 x.sort()
-                c,a,b = tuple(list(y) for y in zip(*x))
-            else:
-                c = None
+                c,a,b,covs = tuple(list(y) for y in zip(*x))
+                if not hasCovs: covs = None
             # plot
             im = ax.scatter(a,b,c=c,cmap=mplt.cm.jet,marker='.')
-            if color: plt.colorbar(im)
+            if covs:
+                # plot 95% confidence ellipses
+                for i, cov in enumerate(covs):
+                    if cov is None: continue
+                    evals, evecs = np.linalg.eig(cov)
+                    e0, e1 = evals[0], evals[1]
+                    if not e0 or not e1: continue
+                    v = evecs[:, 0 if e0 > e1 else 1]
+                    # Chi-squared, 2 df, 95% conf
+                    w = 2*(5.991*e0)**0.5
+                    h = 2*(5.991*e1)**0.5
+                    alpha = 180/math.pi*math.atan2(v[1],v[0])
+                    el = mplt.patches.Ellipse((a[i],b[i]), w, h, alpha, 
+                                              fill=False, ec=im.to_rgba(c[i]))
+                    ax.add_patch(el)
+            if c: plt.colorbar(im)
             # add primary contributing dimensions as vectors
             for j in range(len(self.dims)):
                 if any(abs(self.pca.components_[a,j]) >= dimThresh for a in comps):
@@ -229,6 +262,29 @@ class DB:
                     ax.quiver(0,0,u,v,angles='xy',scale_units='xy',scale=1,width=.005,color='red')
                     ax.annotate(self.dims[j], (u,v), color='red')
             ax.set_title(str(comps))
+
+    def plotMeanPCAOverTime(self, components=[0,1], species=None, dimThresh=0.3,
+                            start=4000, conf=True):
+        '''Plot mean projection of species per time bin.'''
+        def points(x, y):
+            a, b, covs, c = [], [], [] if conf else None, []
+            for i, spst in enumerate(self.speciesByTime()):
+                if self.interval(i)[1] > start: continue
+                sps = set(spst)
+                if species: sps &= species
+                if not sps: continue
+                rows = self.speciesRows(sps)
+                P = self.pca.transform(self.Obs[rows,:])
+                a.append(np.mean(P[:,x]))
+                b.append(np.mean(P[:,y]))
+                if conf:
+                    if len(rows) > 1:
+                        covs.append(np.cov(P[:,[x,y]].transpose(), bias=True))
+                    else:
+                        covs.append(None)
+                c.append(self.interval(i)[1])
+            return a, b, covs, c
+        self.plotPCA(components, dimThresh, points)                
 
     def name(self, r):
         if self.taxaName not in r: return ''
@@ -262,6 +318,12 @@ class DB:
                 for v in self.values(r[f], exclude):
                     values.add(v)
         return values
+
+    def speciesRows(self, species):
+        if species == None: return list(range(len(self.species_)))
+        x = [self.sp2i[sp] for sp in species]
+        x.sort()
+        return x
 
 def testPCA():
     db = DB('../../Paleo/Simpson/Corals/scler.082417a1.csv')

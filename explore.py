@@ -28,19 +28,20 @@ def plotFamilies(db, comps=[0,1,2], top=5):
         return fi #300*fi+np.mean(db.fossilRange(sp))
     db.plot(comps, color)
 
-def plotPhoto(db, comps):
+def plotTrait(db, field, trait, doHas, comps):
     scler = db.fieldSubset('order', 'Scleractinia')
-    photo = db.fieldSubset('diet', 'photosymbiotic') & scler
-    notphoto = db.fieldSubset('diet', 'photosymbiotic', False) & scler
-    both = photo & notphoto
-    db.plot(comps, lambda sp: sum(int(sp in x) for x in [scler,notphoto,both]))
+    has = db.fieldSubset(field, trait) & scler
+    hasnt = db.fieldSubset(field, trait, False) & scler
+    both = has & hasnt
+    which = has if doHas else hasnt
+    db.plot(comps, lambda sp: sum(int(sp in x) for x in [scler,which,both]))
 
-def photoAnalysis():
-    db = DB('../../Paleo/Simpson/Corals/pbdb_animalia_marine_090217.csv')
+def traitAnalysis(field='diet', trait='photosymbiotic', has=False, db=None):
+    db = db if db != None else DB('../../Paleo/Simpson/Corals/pbdb_animalia_marine_090217.csv')
     db.computePCA(['environment'])
-    plotPhoto(db, [0,3])
+    plotTrait(db, field, trait, has, [0,3])
     db.computePCA(['lithology*'])
-    plotPhoto(db, [0,1])
+    plotTrait(db, field, trait, has, [0,1])
     return db
 
 # from Hopkins'14 Table 1
@@ -69,3 +70,12 @@ def binaryAnalysis(db, comps, field, a, b):
     both = asub & bsub
     db.plot(comps, 
             lambda sp: 4*int(sp in scler)+3-int(sp in bsub)-2*int(sp in asub))
+    
+def timeAnalysis(db, start=300):
+    scler = db.fieldSubset('order', 'Scleractinia')
+    db.computePCA(['environment'])
+    db.plot([0,3], db.colorByTime(start=start), species=scler)
+    db.plotMeanPCAOverTime([0,3], species=scler, start=start)
+    db.computePCA(['lithology*'])
+    db.plot([0,1], db.colorByTime(start=start), species=scler)
+    db.plotMeanPCAOverTime([0,1], species=scler, start=start)
