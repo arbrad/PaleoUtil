@@ -41,3 +41,31 @@ def photoAnalysis():
     plotPhoto(db, [0,3])
     db.computePCA(['lithology*'])
     plotPhoto(db, [0,1])
+    return db
+
+# from Hopkins'14 Table 1
+carbonate = ['limestone','carbonate','reef rocks','bafflestone','dolomite',
+             'framestone','grainstone','lime mudstone','packstone','rudstone',
+             'floatstone','wackestone']
+clastic = ['shale','siliciclastic','volcaniclastic','claystone',
+           'conglomerate','mudstone','phyllite','quartzite','sandstone',
+           'siltstone','slate','schist']
+shallow = ['coastal indet.','delta front','delta plain','deltaic indet.',
+           'estuary/bay','foreshore','interdistributary bay','lagoonal',
+           'lagoonal/restricted shallow subtidal','marginal marine indet.',
+           'open shallow subtidal','fluvial-deltaic indet.','paralic indet.',
+           'peritidal','prodelta','sand shoal','shallow subtidal indet.',
+           'shoreface','transition zone/lower shoreface',
+           'intrashelf/intraplatform reef','reef','buildup or bioherm',
+           'perireef or subreef','platform/shelf-margin reef']
+deep = ['basinal (carbonate)','basinal (siliceous)','basinal (siliciclastic)',
+        'deep-water indet.','deep subtidal indet.','deep subtidal ramp',
+        'deep subtidal shelf','offshore','offshore indet.','offshore shelf',
+        'slope','submarine fan','offshore ramp','basin reef','slope/ramp reef']
+def binaryAnalysis(db, comps, field, a, b):
+    scler = db.fieldSubset('order', 'Scleractinia')
+    asub = db.fieldSubset(field, a) 
+    bsub = db.fieldSubset(field, b)
+    both = asub & bsub
+    db.plot(comps, 
+            lambda sp: 4*int(sp in scler)+3-int(sp in bsub)-2*int(sp in asub))

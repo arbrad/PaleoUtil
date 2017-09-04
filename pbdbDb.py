@@ -172,8 +172,12 @@ class DB:
     def fieldSubset(self, fields, value, pol=True):
         '''Subset function constructor.'''
         sp = set()
+        if type(value) != str:
+            value = set(value)
         for r in self.data:
-            if (value in self.valuesInFields(fields, r)) == pol:
+            if ((type(value) == set and 
+                 bool(value & self.valuesInFields(fields, r)) == pol)
+                or (value in self.valuesInFields(fields, r)) == pol):
                 sp.add(self.name(r))
         return sp 
     def fieldSubsets(self, fields, species=None):
