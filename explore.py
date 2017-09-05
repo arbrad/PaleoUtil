@@ -90,8 +90,6 @@ def ncr(N, Rs_):
     return numer//denom
 def multinomial(N, Rs, Ps):
     x, y = sum(Rs), sum(Ps)
-    if x < N: Rs.append(N-x)
-    if y < 1: Ps.append(1-y)
     assert len(Rs) == len(Ps)
     return ncr(N, Rs) * reduce(op.mul, (Ps[i]**Rs[i] for i in range(len(Ps))))
 def p(dist=[0,25,1,99]):
