@@ -229,7 +229,7 @@ def pAffinityChanges(dists, hdip=95, grid=100, margin=False):
                                 [x[2]-x[1] for x in hs]]),
                       fmt='.')
 
-def simulateAffinity(N, start=[10,40,15,10], delta=10):
+def simulateAffinity(N, start=[10,40,15,10], delta=10, grid=100, margin=False):
     dists = [np.array(start)]
     for _ in range(N-1):
         ch = np.array([random.randint(-delta, delta) for _ in dists[-1]])
@@ -243,7 +243,7 @@ def simulateAffinity(N, start=[10,40,15,10], delta=10):
     nca.insert(0, 0)
     print('in n-af n-afc | h1t h1o h2t h2o')
     for i in range(len(na)):
-        print('%2d %.2f % .2f | %s'%(i, na[i], nca[i],
+        print('%2d % .2f % .2f | %s'%(i, na[i], nca[i],
                                      ' '.join('%3d'%x for x in dists[i])))
     
     
