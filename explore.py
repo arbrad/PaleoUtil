@@ -11,6 +11,7 @@ clean code.
 from functools import reduce
 import operator as op
 from pbdbDb import DB
+import random
 
 def plotFamilies(db, comps=[0,1,2], top=5):
     fam2sp = db.fieldSubsets('family', db.fieldSubset('order', 'Scleractinia'))
@@ -101,6 +102,43 @@ def multinomial(N, Rs, Ps):
             return multinomial(N, Rs[:i]+Rs[i+1:], Ps[:i]+Ps[i+1:])
     return math.exp(lmultinomial(N, Rs, Ps))
 
+def hdi(x, pct=0.95):
+    '''Compute highest density interval on distribution x. Returns
+    (left, mode, right).'''
+    norm = sum(x)
+    i, s = max(enumerate(x), key=lambda x: x[1])
+    l, r = i-1, i+1
+    while s/norm < pct:
+        if l < 0: 
+            s += x[r]
+            r += 1
+        elif r >= len(x):
+            s += x[l]
+            l -= 1
+        elif x[l] > x[r]:
+            s += x[l]
+            l -= 1
+        else:
+            s += x[r]
+            r += 1
+    return (l+1, i, r-1)
+def hdis(xs, pct=0.95):
+    '''Compute HDIs over sequence of x,y-defined distributions.'''
+    # compute hdis for each of cs in terms of mesh
+    hdis = []
+    for x in xs:
+        l, m, r = hdi(x[1], pct)
+        l, m, r = x[0][l], x[0][m], x[0][r]
+        hdis.append((l, m, r))
+    return hdis
+
+def naiveAffinity(dist):
+    try:
+        a, b = (dist[x+0]/(dist[x+0]+dist[x+1]) for x in (0,2))
+        return a/(a+b) if a+b else -1
+    except:
+        return -1
+
 def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True):
     '''For dist=[H1-taxa-fossil, H1-other, H2-taxa-fossil, H2-other],
     compute the probability distribution of affinity for H1. When
@@ -126,11 +164,10 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True):
         z = (1-a)/a
         x = f/(h+z*(1-h))
         y = z*x
-        return multinomial(N, dist,
-                           [x*h,
-                            (1-x)*h,
-                            y*(1-h),
-                            (1-y)*(1-h)])
+        pcat = [x*h, (1-x)*h, y*(1-h), (1-y)*(1-h)]
+        if any(p < 0 or p > 1 for p in pcat):
+            return 0
+        return multinomial(N, dist, pcat)
     mesh = np.linspace(1/grid,1-1/grid,grid-1)
     if margin:
         # Marginalize, which can matter for small sample sizes
@@ -144,22 +181,69 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True):
     s = sum(x)
     x = [e/s/unit for e in x]
     if plot:
-        plt.plot(np.linspace(0,1,len(x)), x)
+        p = plt.plot(mesh, x)
+        l, _, r = hdi(x)
+        plt.axvline(mesh[l], color=p[-1].get_color(), linestyle=':')
+        plt.axvline(mesh[r], color=p[-1].get_color(), linestyle=':')
         tenth = math.floor(0.1*(len(x)-1))
-        print('%.2f %.2f'%(unit*sum(x[:1+tenth]),unit*sum(x[-tenth-1:])))
-    return x
+        print('%.2f %.2f %.2f'%(unit*sum(x[:1+tenth]),
+                                unit*sum(x[-tenth-1:]),
+                                naiveAffinity(dist)))
+    return mesh, x
 
-def pAffinityChange(dist0, dist1, grid=100, margin=False):
+def pAffinityChange(dist0, dist1, grid=100, margin=False,
+                    plot=True, p0=None, p1=None):
     '''For two distributions as in pAffinity, compute the 
     probability distribution of the change in affinity for H1.'''
-    p0 = pAffinity(dist0, grid, margin, plot=True)
-    p1 = pAffinity(dist1, grid, margin, plot=True)
+    p0 = pAffinity(dist0, grid, margin, plot=True)[1] if p0 is None else p0
+    p1 = pAffinity(dist1, grid, margin, plot=True)[1] if p1 is None else p1
     x = [0 for _ in range(2*len(p0)+1)]
     mesh = np.linspace(1/grid,1-1/grid,grid-1)
     for i, a0 in enumerate(mesh):
         for j, a1 in enumerate(mesh):
             d = a1-a0
             x[int((d+1)*grid+0.5)] += p0[i]*p1[j]/grid
-    plt.plot(np.linspace(-1+1/grid,1-1/grid,2*grid-1), x)
-    print([d[0]/(d[0]+d[1])/(d[0]/(d[0]+d[1])+d[2]/(d[2]+d[3])) for 
-           d in [dist0,dist1]])
+    ls = np.linspace(-1+1/grid,1-1/grid,2*grid-1)
+    if plot:
+        p = plt.plot(ls, x)
+        l, _, r = hdi(x)
+        plt.axvline(ls[l], color=p[-1].get_color(), linestyle=':')
+        plt.axvline(ls[r], color=p[-1].get_color(), linestyle=':')
+    return ls, x
+
+def pAffinityChanges(dists, hdip=95, grid=100, margin=False):
+    '''Plot HDIs around modes of changes in affinity over given
+    sequence of fossil distributions.'''
+    # compute all affinity distributions silently
+    ps = [pAffinity(d, grid, margin, False) for d in dists]
+    phdis = hdis(ps)
+    # compute difference distributions silently using ps
+    cs = [pAffinityChange(None, None, grid, margin, False, 
+                          ps[i][1], ps[i+1][1]) for
+          i in range(len(ps)-1)]
+    chdis = hdis(cs)
+    for hs, offset in ((phdis, 0), (chdis, 0.5)):
+        plt.errorbar([x+offset for x in range(len(hs))], 
+                      [x[1] for x in hs],
+                      np.array([[x[1]-x[0] for x in hs], 
+                                [x[2]-x[1] for x in hs]]),
+                      fmt='.')
+
+def simulateAffinity(N, start=[10,40,15,10], delta=10):
+    dists = [np.array(start)]
+    for _ in range(N-1):
+        ch = np.array([random.randint(-delta, delta) for _ in dists[-1]])
+        dists.append(dists[-1]+np.array(ch))
+        for i in range(len(dists[-1])):
+            if dists[-1][i] < 0:
+                dists[-1][i] = 0
+    pAffinityChanges([x.tolist() for x in dists])
+    na = [naiveAffinity(d) for d in dists]
+    nca = [na[i+1]-na[i] for i in range(len(na)-1)]
+    nca.insert(0, 0)
+    print('in n-af n-afc | h1t h1o h2t h2o')
+    for i in range(len(na)):
+        print('%2d %.2f % .2f | %s'%(i, na[i], nca[i],
+                                     ' '.join('%3d'%x for x in dists[i])))
+    
+    
