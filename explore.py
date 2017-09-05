@@ -96,7 +96,7 @@ def multinomial(N, Rs, Ps):
     assert sum(Rs) == N
     assert len(Rs) == len(Ps)
     for i in range(len(Rs)):
-        if not Ps[i]:
+        if Ps[i] < 1e-5:
             if Rs[i]: return 0
             return multinomial(N, Rs[:i]+Rs[i+1:], Ps[:i]+Ps[i+1:])
     return math.exp(lmultinomial(N, Rs, Ps))
@@ -113,20 +113,31 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True):
         # a = affinity for H1
         # f = frequency of taxa of interest
         # h = frequency of H1 samples compared to H2
+        # Let x, y be frequencies defining the four categories:
+        #  xh (1-x)h y(1-h) (1-y)(1-h)
+        # i.e., x is the proportion of taxa fossils in H1, y is
+        # the same in H2. We want
+        #  a = x/(x+y)
+        #  f = xh + y(1-h)
+        # Solving for x and y in terms of a, f, and h yields the
+        # following:
+        z = (1-a)/a
+        x = f/(h+z*(1-h))
+        y = z*x
         return multinomial(N, dist,
-                           [a*f*h,
-                            (1-a*f)*h,
-                            (1-a)*f*(1-h),
-                            (1-(1-a)*f)*(1-h)])
+                           [x*h,
+                            (1-x)*h,
+                            y*(1-h),
+                            (1-y)*(1-h)])
+    mesh = np.linspace(1/grid,1-1/grid,grid-1)
     if margin:
-        # Naive mesh, will switch to MCMC
-        mesh = np.linspace(0,1,grid+1)
+        # Just a check on the ol' math
         x = [sum(g(a,f,h) for f in mesh for h in mesh) for a in mesh]
     else:
         # Use sample means for f, h
         f = (dist[0]+dist[2])/N
         h = sum(dist[:2])/N
-        x = [g(a,f,h) for a in np.linspace(0,1,grid+1)]
+        x = [g(a,f,h) for a in mesh]
     unit = 1/grid
     s = sum(x)
     x = [e/s/unit for e in x]
@@ -141,11 +152,12 @@ def pAffinityChange(dist0, dist1, grid=100, margin=False):
     probability distribution of the change in affinity for H1.'''
     p0 = pAffinity(dist0, grid, margin, plot=True)
     p1 = pAffinity(dist1, grid, margin, plot=True)
-    x = [0 for _ in range(2*len(p0)-1)]
-    mesh = np.linspace(0,1,grid+1)
+    x = [0 for _ in range(2*len(p0)+1)]
+    mesh = np.linspace(1/grid,1-1/grid,grid-1)
     for i, a0 in enumerate(mesh):
         for j, a1 in enumerate(mesh):
             d = a1-a0
             x[int((d+1)*grid+0.5)] += p0[i]*p1[j]/grid
-    plt.plot(np.linspace(-1,1,2*grid+1), x)
-    print([d[0]/d[1]/(d[0]/d[1]+d[2]/d[3]) for d in [dist0,dist1]])
+    plt.plot(np.linspace(-1+1/grid,1-1/grid,2*grid-1), x)
+    print([d[0]/(d[0]+d[1])/(d[0]/(d[0]+d[1])+d[2]/(d[2]+d[3])) for 
+           d in [dist0,dist1]])
