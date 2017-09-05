@@ -105,9 +105,11 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True):
     '''For dist=[H1-taxa-fossil, H1-other, H2-taxa-fossil, H2-other],
     compute the probability distribution of affinity for H1. When
     margin=False, the computation uses the sample frequency of taxa
-    fossils, f, and H1 fossils, h. When margin=True, the distribution 
-    is computed by marginalizing out f and h from a joint a-f-h
-    distribution. grid controls the mesh granularity.'''
+    fossils, f, and H1 fossils, h; otherwise, it considers the joint
+    a-f-h distribution and marginalizes out f and h. For small samples,
+    the computed distributions differ w/ and w/o marginalizing, but
+    as the sampe size increases (for the same ratios), they converge.
+    grid controls the mesh granularity.'''
     N = sum(dist)
     def g(a,f,h):
         # a = affinity for H1
@@ -131,7 +133,7 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True):
                             (1-y)*(1-h)])
     mesh = np.linspace(1/grid,1-1/grid,grid-1)
     if margin:
-        # Just a check on the ol' math
+        # Marginalize, which can matter for small sample sizes
         x = [sum(g(a,f,h) for f in mesh for h in mesh) for a in mesh]
     else:
         # Use sample means for f, h
@@ -148,7 +150,7 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True):
     return x
 
 def pAffinityChange(dist0, dist1, grid=100, margin=False):
-    '''For two distributions as in pAffinity, cmpute the 
+    '''For two distributions as in pAffinity, compute the 
     probability distribution of the change in affinity for H1.'''
     p0 = pAffinity(dist0, grid, margin, plot=True)
     p1 = pAffinity(dist1, grid, margin, plot=True)
