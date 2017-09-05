@@ -145,6 +145,7 @@ class DB:
         for r in range(self.Obs.shape[0]):
             for c in range(self.Obs.shape[1]):
                 self.Obs[r,c] /= nocc[r]
+                assert self.Obs[r,c] >= 0
                 assert self.Obs[r,c] <= 1
         # compute PCA
         self.pca = PCA(whiten=True)

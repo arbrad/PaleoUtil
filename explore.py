@@ -8,6 +8,8 @@ A file for exploratory code. Fruitful explorations will be rewritten into
 clean code.
 """
 
+from functools import reduce
+import operator as op
 from pbdbDb import DB
 
 def plotFamilies(db, comps=[0,1,2], top=5):
@@ -79,3 +81,31 @@ def timeAnalysis(db, start=300):
     db.computePCA(['lithology*'])
     db.plot([0,1], db.colorByTime(start=start), species=scler)
     db.plotMeanPCAOverTime([0,1], species=scler, start=start)
+
+def ncr(N, Rs_):
+    Rs = Rs_[:]
+    Rs.sort()
+    numer = reduce(op.mul, range(N, Rs[-1], -1), 1)
+    denom = reduce(op.mul, (reduce(op.mul, range(1, x+1), 1) for x in Rs[:-1]))
+    return numer//denom
+def multinomial(N, Rs, Ps):
+    x, y = sum(Rs), sum(Ps)
+    if x < N: Rs.append(N-x)
+    if y < 1: Ps.append(1-y)
+    assert len(Rs) == len(Ps)
+    return ncr(N, Rs) * reduce(op.mul, (Ps[i]**Rs[i] for i in range(len(Ps))))
+def p(dist=[0,25,1,99]):
+    N = sum(dist)
+    f = (dist[0]+dist[2])/N
+    h = sum(dist[:2])/N
+    def g(a):
+        return multinomial(N, dist,
+                           [a*f*h,
+                            (1-a*f)*h,
+                            (1-a)*f*(1-h),
+                            (1-(1-a)*f)*(1-h)])
+    x = [g(a) for a in np.linspace(0,1,100)]
+    s = sum(x)
+    x = [e/s for e in x]
+    plt.plot(np.linspace(0,1,100), x)
+    print('%.2f %.2f'%(sum(x[:10]),sum(x[90:])))
