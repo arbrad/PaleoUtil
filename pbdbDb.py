@@ -65,8 +65,8 @@ class DB:
         # time bins by species
         self.bins = {}
         for sp, (e,l) in self.range.items():
-            eb = bisect.bisect_right(self.timeSplits, e)
-            lb = bisect.bisect_left(self.timeSplits, l)
+            eb = bisect.bisect_left(self.timeSplits, e)
+            lb = bisect.bisect_right(self.timeSplits, l)
             assert lb <= eb
             self.bins[sp] = list(range(lb,eb+1))
     
@@ -373,7 +373,7 @@ def speciesOverTime(db, degrees=None, modifier='', byBin=False, cutoffThresh=.05
             y = [0 for _ in x]
             for sp in db.species():
                 e, l = db.fossilRange(sp)
-                for i in range(math.floor(l), math.floor(e)):
+                for i in range(math.floor(l), math.floor(e)+1):
                     y[i] += 1
             # cut graph to to start at first significant time
             thresh = cutoffThresh * max(y)

@@ -113,8 +113,8 @@ def fossilDistributions(data, field, h1_, h2_, start=260):
             isH2 = isH2 or inter(r[f], h2)
         e, l = float(r['max_ma']), float(r['min_ma'])
         if e > start: continue
-        eb = bisect.bisect_right(splits, e)
-        lb = bisect.bisect_left(splits, l)
+        eb = bisect.bisect_left(splits, e)
+        lb = bisect.bisect_right(splits, l)
         assert lb <= eb and eb < len(h1t)
         for i in range(lb, eb+1):
             addTo(isScler, isH1, isH2, i)
@@ -124,7 +124,7 @@ def fossilDistributions(data, field, h1_, h2_, start=260):
     times = [(splits[i]+splits[i+1])/2 for i in range(len(splits)-1)]
     times = times[0:len(dists)]
     return times, dists
-def affinityAnalysis(data, smart=False, grid=100, hdip=0.95):
+def affinityAnalysis(data, smart=False, grid=100, hdip=0.95, ret=False):
     timesEnv, distsEnv = fossilDistributions(data, 'environment', shallow, deep)
     timesLit, distsLit = fossilDistributions(data, 'lithology*', carbonate, clastic)
     plt.figure()
@@ -133,6 +133,7 @@ def affinityAnalysis(data, smart=False, grid=100, hdip=0.95):
     plt.figure()
     plt.title('Lithology: carbonate/clastic')
     pAffinityChanges(distsLit, times=timesLit, smart=smart, grid=grid, hdip=hdip)
+    if ret: return timesEnv, distsEnv, timesLit, distsLit
 
 lncr_ = {}
 def lncr(N, Rs):
@@ -159,17 +160,11 @@ def hdi(x, pct=0.95):
     norm = sum(x)
     i, s = max(enumerate(x), key=lambda x: x[1])
     l, r = i-1, i+1
-    if l <= 0:
-        s += x[0]
-        l = 0
-    if r >= len(x)-1:
-        s += x[-1]
-        r = len(x)-1
     while s/norm < pct:
-        if l == 0:
+        if l < 0:
             s += x[r]
             r += 1
-        elif r == len(x)-1:
+        elif r == len(x):
             s += x[l]
             l -= 1
         elif x[l] > x[r]:
@@ -178,11 +173,7 @@ def hdi(x, pct=0.95):
         else:
             s += x[r]
             r += 1
-    if l < 0 or r >= len(x):
-        print(l, i, r, s/norm, pct)
-        l = 0
-        r = len(x)-1
-    return (l, i, r)
+    return (max(0,l), i, min(len(x)-1,r))
 def hdis(xs, pct=0.95):
     '''Compute HDIs over sequence of x,y-defined distributions.'''
     # compute hdis for each of cs in terms of mesh
@@ -286,8 +277,9 @@ def pAffinityChanges(dists, hdip=0.95, grid=100, margin=False, times=None,
     ps = [pAffinity(d, grid, margin, False, smart=smart) for d in dists]
     phdis = hdis(ps, hdip)
     # compute difference distributions silently using ps
+    a, b = (1, 0) if times else (0, 1)
     cs = [pAffinityChange(None, None, grid, margin, False, 
-                          ps[i][1], ps[i+1][1]) for
+                          ps[i+a][1], ps[i+b][1]) for
           i in range(len(ps)-1)]
     chdis = hdis(cs, hdip)
     for hs, offset in ((phdis, 0), (chdis, 0.5)):
