@@ -83,10 +83,10 @@ def timeAnalysis(db, start=300):
     db.plot([0,1], db.colorByTime(start=start), species=scler)
     db.plotMeanPCAOverTime([0,1], species=scler, start=start)
 
-def fossilDistributions(data, field, h1_, h2_, start=260):
+def fossilDistributions(data, field, h1_, h2_, start=260, timeLevel=5):
     with open('resources/time.csv') as f:
         splits = [float(t['max_ma']) for t in csv.DictReader(f) if 
-                  int(t['scale_level']) == 5]
+                  int(t['scale_level']) == timeLevel]
         splits.sort()
     h1, h2 = set(h1_), set(h2_)
     def inter(vals, h):
@@ -124,15 +124,20 @@ def fossilDistributions(data, field, h1_, h2_, start=260):
     times = [(splits[i]+splits[i+1])/2 for i in range(len(splits)-1)]
     times = times[0:len(dists)]
     return times, dists
-def affinityAnalysis(data, smart=False, grid=100, hdip=0.95, ret=False):
-    timesEnv, distsEnv = fossilDistributions(data, 'environment', shallow, deep)
-    timesLit, distsLit = fossilDistributions(data, 'lithology*', carbonate, clastic)
+def affinityAnalysis(data, smart=False, grid=100, hdip=0.95, timeLevel=5, 
+                     ret=False, absAff=False):
+    timesEnv, distsEnv = fossilDistributions(data, 'environment', shallow, deep, 
+                                             timeLevel=timeLevel)
+    timesLit, distsLit = fossilDistributions(data, 'lithology*', carbonate, clastic,
+                                             timeLevel=timeLevel)
     plt.figure()
     plt.title('Environment: shallow/deep')
-    pAffinityChanges(distsEnv, times=timesEnv, smart=smart, grid=grid, hdip=hdip)
+    pAffinityChanges(distsEnv, times=timesEnv, smart=smart, grid=grid, hdip=hdip,
+                     absAff=absAff)
     plt.figure()
     plt.title('Lithology: carbonate/clastic')
-    pAffinityChanges(distsLit, times=timesLit, smart=smart, grid=grid, hdip=hdip)
+    pAffinityChanges(distsLit, times=timesLit, smart=smart, grid=grid, hdip=hdip,
+                     absAff=absAff)
     if ret: return timesEnv, distsEnv, timesLit, distsLit
 
 lncr_ = {}
@@ -184,15 +189,18 @@ def hdis(xs, pct=0.95):
         hdis.append((l, m, r))
     return hdis
 
-def naiveAffinity(dist):
+def naiveAffinity(dist, absAff):
     try:
-        a, b = (dist[x+0]/(dist[x+0]+dist[x+1]) for x in (0,2))
+        if absAff:
+            a, b = dist[0], dist[2]
+        else:
+            a, b = (dist[x+0]/(dist[x+0]+dist[x+1]) for x in (0,2))
         return a/(a+b) if a+b else -1
     except:
         return -1
 
 def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True, 
-              smart=False):
+              smart=False, absAff=False):
     '''For dist=[H1-taxa-fossil, H1-other, H2-taxa-fossil, H2-other],
     compute the probability distribution of affinity for H1. When
     margin=False, the computation uses the sample frequency of taxa
@@ -215,9 +223,14 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True,
         #  f = xh + y(1-h)
         # Solving for x and y in terms of a, f, and h yields the
         # following:
-        z = (1-a)/a
-        x = f/(h+z*(1-h))
-        y = z*x
+        if not absAff:
+            z = (1-a)/a
+            x = f/(h+z*(1-h))
+            y = z*x
+        else:
+            # instead, define a = xh/f
+            x = a*f/h
+            y = x*h/(1-h)*(1-a)/a
         pcat = [x*h, (1-x)*h, y*(1-h), (1-y)*(1-h)]
         if any(p < 0 or p > 1 for p in pcat):
             return 0
@@ -243,18 +256,17 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True,
         l, _, r = hdi(x)
         plt.axvline(mesh[l], color=p[-1].get_color(), linestyle=':')
         plt.axvline(mesh[r], color=p[-1].get_color(), linestyle=':')
-        tenth = math.floor(0.1*(len(x)-1))
-        print('%.2f %.2f %.2f'%(unit*sum(x[:1+tenth]),
-                                unit*sum(x[-tenth-1:]),
-                                naiveAffinity(dist)))
+        half = math.floor(0.5*(len(x)-1))
+        print('%.2f %.2f'%(unit*sum(x[:1+half]),
+                           naiveAffinity(dist, absAff)))
     return mesh, x
 
 def pAffinityChange(dist0, dist1, grid=100, margin=False,
-                    plot=True, p0=None, p1=None):
+                    plot=True, p0=None, p1=None, absAff=False):
     '''For two distributions as in pAffinity, compute the 
     probability distribution of the change in affinity for H1.'''
-    p0 = pAffinity(dist0, grid, margin, plot=True)[1] if p0 is None else p0
-    p1 = pAffinity(dist1, grid, margin, plot=True)[1] if p1 is None else p1
+    p0 = pAffinity(dist0, grid, margin, plot=True, absAff=absAff)[1] if p0 is None else p0
+    p1 = pAffinity(dist1, grid, margin, plot=True, absAff=absAff)[1] if p1 is None else p1
     x = [0 for _ in range(2*len(p0)+1)]
     mesh = np.linspace(1/grid,1-1/grid,grid-1)
     for i, a0 in enumerate(mesh):
@@ -270,11 +282,11 @@ def pAffinityChange(dist0, dist1, grid=100, margin=False,
     return ls, x
 
 def pAffinityChanges(dists, hdip=0.95, grid=100, margin=False, times=None, 
-                     smart=False):
+                     smart=False, absAff=False):
     '''Plot HDIs around modes of changes in affinity over given
     sequence of fossil distributions.'''
     # compute all affinity distributions silently
-    ps = [pAffinity(d, grid, margin, False, smart=smart) for d in dists]
+    ps = [pAffinity(d, grid, margin, False, smart=smart, absAff=absAff) for d in dists]
     phdis = hdis(ps, hdip)
     # compute difference distributions silently using ps
     a, b = (1, 0) if times else (0, 1)
