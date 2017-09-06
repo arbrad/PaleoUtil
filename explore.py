@@ -124,20 +124,17 @@ def fossilDistributions(data, field, h1_, h2_, start=260, timeLevel=5):
     times = [(splits[i]+splits[i+1])/2 for i in range(len(splits)-1)]
     times = times[0:len(dists)]
     return times, dists
-def affinityAnalysis(data, smart=False, grid=100, hdip=0.95, timeLevel=5, 
-                     ret=False, absAff=False):
+def affinityAnalysis(data, timeLevel=5, ret=False, **kwargs):
     timesEnv, distsEnv = fossilDistributions(data, 'environment', shallow, deep, 
                                              timeLevel=timeLevel)
     timesLit, distsLit = fossilDistributions(data, 'lithology*', carbonate, clastic,
                                              timeLevel=timeLevel)
     plt.figure()
     plt.title('Environment: shallow/deep')
-    pAffinityChanges(distsEnv, times=timesEnv, smart=smart, grid=grid, hdip=hdip,
-                     absAff=absAff)
+    pAffinityChanges(distsEnv, times=timesEnv, **kwargs)
     plt.figure()
     plt.title('Lithology: carbonate/clastic')
-    pAffinityChanges(distsLit, times=timesLit, smart=smart, grid=grid, hdip=hdip,
-                     absAff=absAff)
+    pAffinityChanges(distsLit, times=timesLit, **kwargs)
     if ret: return timesEnv, distsEnv, timesLit, distsLit
 
 lncr_ = {}
@@ -199,8 +196,20 @@ def naiveAffinity(dist, absAff):
     except:
         return -1
 
-def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True, 
-              smart=False, absAff=False):
+def options(**kwargs):
+    class Options:
+        def __init__(self):
+            self.grid = 100
+            self.margin = False
+            self.smart = False
+            self.absAff = False
+            self.hdip = 0.95
+    o = Options()
+    for k, v in kwargs.items():
+        setattr(o, k, v)
+    return o
+
+def pAffinity(dist=[0,250,0,1000], plot=True, **kwargs):
     '''For dist=[H1-taxa-fossil, H1-other, H2-taxa-fossil, H2-other],
     compute the probability distribution of affinity for H1. When
     margin=False, the computation uses the sample frequency of taxa
@@ -211,6 +220,7 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True,
     grid controls the mesh granularity.'''
     N = sum(dist)
     if N == 0: return
+    opts = options(**kwargs)
     def g(a,f,h):
         # a = affinity for H1
         # f = frequency of taxa of interest
@@ -223,7 +233,7 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True,
         #  f = xh + y(1-h)
         # Solving for x and y in terms of a, f, and h yields the
         # following:
-        if not absAff:
+        if not opts.absAff:
             z = (1-a)/a
             x = f/(h+z*(1-h))
             y = z*x
@@ -235,8 +245,9 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True,
         if any(p < 0 or p > 1 for p in pcat):
             return 0
         return multinomial(N, dist, pcat)
-    mesh = np.linspace(1/grid,1-1/grid,grid-1)
-    if smart:
+    mesh = np.linspace(1/opts.grid,1-1/opts.grid,opts.grid-1)
+    margin = opts.margin
+    if opts.smart:
         margin = any(x < 10 for x in dist)
     if margin:
         # Marginalize, which can matter for small sample sizes
@@ -246,7 +257,7 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True,
         f = (dist[0]+dist[2])/N
         h = sum(dist[:2])/N
         x = [g(a,f,h) for a in mesh]
-    unit = 1/grid
+    unit = 1/opts.grid
     s = sum(x)
     if not s:
         print(dist)
@@ -258,22 +269,22 @@ def pAffinity(dist=[0,250,0,1000], grid=100, margin=False, plot=True,
         plt.axvline(mesh[r], color=p[-1].get_color(), linestyle=':')
         half = math.floor(0.5*(len(x)-1))
         print('%.2f %.2f'%(unit*sum(x[:1+half]),
-                           naiveAffinity(dist, absAff)))
+                           naiveAffinity(dist, opts.absAff)))
     return mesh, x
 
-def pAffinityChange(dist0, dist1, grid=100, margin=False,
-                    plot=True, p0=None, p1=None, absAff=False):
+def pAffinityChange(dist0, dist1, plot=True, p0=None, p1=None, **kwargs):
     '''For two distributions as in pAffinity, compute the 
     probability distribution of the change in affinity for H1.'''
-    p0 = pAffinity(dist0, grid, margin, plot=True, absAff=absAff)[1] if p0 is None else p0
-    p1 = pAffinity(dist1, grid, margin, plot=True, absAff=absAff)[1] if p1 is None else p1
+    p0 = pAffinity(dist0, plot=True, **kwargs)[1] if p0 is None else p0
+    p1 = pAffinity(dist1, plot=True, **kwargs)[1] if p1 is None else p1
+    opts = options(**kwargs)
     x = [0 for _ in range(2*len(p0)+1)]
-    mesh = np.linspace(1/grid,1-1/grid,grid-1)
+    mesh = np.linspace(1/opts.grid,1-1/opts.grid,opts.grid-1)
     for i, a0 in enumerate(mesh):
         for j, a1 in enumerate(mesh):
             d = a1-a0
-            x[int((d+1)*grid+0.5)] += p0[i]*p1[j]/grid
-    ls = np.linspace(-1+1/grid,1-1/grid,2*grid-1)
+            x[int((d+1)*opts.grid+0.5)] += p0[i]*p1[j]/opts.grid
+    ls = np.linspace(-1+1/opts.grid,1-1/opts.grid,2*opts.grid-1)
     if plot:
         p = plt.plot(ls, x)
         l, _, r = hdi(x)
@@ -281,19 +292,18 @@ def pAffinityChange(dist0, dist1, grid=100, margin=False,
         plt.axvline(ls[r], color=p[-1].get_color(), linestyle=':')
     return ls, x
 
-def pAffinityChanges(dists, hdip=0.95, grid=100, margin=False, times=None, 
-                     smart=False, absAff=False):
+def pAffinityChanges(dists, times=None, wiggle=0, **kwargs):
     '''Plot HDIs around modes of changes in affinity over given
     sequence of fossil distributions.'''
     # compute all affinity distributions silently
-    ps = [pAffinity(d, grid, margin, False, smart=smart, absAff=absAff) for d in dists]
-    phdis = hdis(ps, hdip)
+    opts = options(**kwargs)
+    ps = [pAffinity(d, False, **kwargs) for d in dists]
+    phdis = hdis(ps, opts.hdip)
     # compute difference distributions silently using ps
     a, b = (1, 0) if times else (0, 1)
-    cs = [pAffinityChange(None, None, grid, margin, False, 
-                          ps[i+a][1], ps[i+b][1]) for
+    cs = [pAffinityChange(None, None, False, ps[i+a][1], ps[i+b][1], **kwargs) for
           i in range(len(ps)-1)]
-    chdis = hdis(cs, hdip)
+    chdis = hdis(cs, opts.hdip)
     for hs, offset in ((phdis, 0), (chdis, 0.5)):
         if times:
             if offset:
@@ -301,14 +311,14 @@ def pAffinityChanges(dists, hdip=0.95, grid=100, margin=False, times=None,
             else:
                 x = [-x for x in times]
         else:
-            x = [x+offset for x in range(len(hs))]
+            x = [x+offset+wiggle for x in range(len(hs))]
         plt.errorbar(x, 
                      [x[1] for x in hs],
                      np.array([[x[1]-x[0] for x in hs], 
                                [x[2]-x[1] for x in hs]]),
                      fmt='.')
 
-def simulateAffinity(N, start=[10,40,15,10], delta=10, grid=100, margin=False):
+def simulateAffinity(N, start=[10,40,15,10], delta=10, **kwargs):
     dists = [np.array(start)]
     for _ in range(N-1):
         ch = np.array([random.randint(-delta, delta) for _ in dists[-1]])
@@ -316,11 +326,13 @@ def simulateAffinity(N, start=[10,40,15,10], delta=10, grid=100, margin=False):
         for i in range(len(dists[-1])):
             if dists[-1][i] < 0:
                 dists[-1][i] = 0
-    pAffinityChanges([x.tolist() for x in dists])
-    na = [naiveAffinity(d) for d in dists]
-    nca = [na[i+1]-na[i] for i in range(len(na)-1)]
-    nca.insert(0, 0)
-    print('in n-af n-afc | h1t h1o h2t h2o')
-    for i in range(len(na)):
-        print('%2d % .2f % .2f | %s'%(i, na[i], nca[i],
-                                     ' '.join('%3d'%x for x in dists[i])))
+    for absAff in [False, True]:
+        pAffinityChanges([x.tolist() for x in dists],
+                          absAff=absAff, wiggle=0.1*absAff, **kwargs)
+        na = [naiveAffinity(d, absAff) for d in dists]
+        nca = [na[i+1]-na[i] for i in range(len(na)-1)]
+        nca.insert(0, 0)
+        print('in n-aff n-afc | h1t h1o h2t h2o')
+        for i in range(len(na)):
+            print('%2d % .2f % .2f | %s'%(i, na[i], nca[i],
+                                         ' '.join('%3d'%x for x in dists[i])))
