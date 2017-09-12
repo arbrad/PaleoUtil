@@ -10,7 +10,7 @@ clean code.
 
 from functools import reduce
 from pbdbDb import DB
-from affinity import pAffinityDiff, hdis
+from affinity import *
 import random
 
 def plotFamilies(db, comps=[0,1,2], top=5):
@@ -83,56 +83,66 @@ def timeAnalysis(db, start=300):
     db.plot([0,1], db.colorByTime(start=start), species=scler)
     db.plotMeanPCAOverTime([0,1], species=scler, start=start)
 
+def location(r, degrees=10):
+    lat, lng = 'lat', 'lng'
+    if lat not in r or lng not in r:
+        return
+    def f(s): return math.floor(float(r[s])//degrees+0.5)
+    try:
+        return f(lng), f(lat)
+    except:
+        return
+
 def fossilDistributions(data, field, h1_, h2_, 
-                        groupLevel='order', group='Scleractinia',
                         trackLevel='accepted_name',
-                        start=250, end=0, timeLevel=5,
-                        lblFn=lambda x: 0):
+                        timeLevel=5,
+                        lblFn=location,
+                        start=550, end=0):
+    # Time splits
     with open('resources/time.csv') as f:
         splits = [float(t['max_ma']) for t in csv.DictReader(f) if 
                   int(t['scale_level']) == timeLevel]
         splits.sort()
-    h1, h2 = set(h1_), set(h2_)
-    # Intersection of values with category.
-    def inter(vals, h):
-        vals = set(x.strip().strip('"') for x in vals.split(','))
-        return bool(vals & h)
-    # Categories: h1/h2 taxon/other
-    h1t, h1o, h2t, h2o, h1lbl, h2lbl = ([set() for _ in range(len(splits)+1)] for _ in range(6))
-    h_ = [h1o, h2o, h1t, h2t]
-    sp2i, sp2lbl = {}, {}
-    # Add to category data structures
-    def addTo(isScler, isH1, isH2, i, species):
-        # add overlaps to both categories
-        if isH1: h_[2*isScler][i].add(species)
-        if isH2: h_[2*isScler+1][i].add(species)
-        if species not in sp2i: sp2i[species] = set()
-        sp2i[species].add(i)
-    # Process fields
+    # Expand field into multiple if necessary
     if field[-1] == '*':
         fields = [field[:-1]+'1', field[:-1]+'2']
     else:
         fields = [field]
+    # Intersection of values with category.
+    h1desc, h2desc = set(h1_), set(h2_)
+    def inter(vals, h):
+        vals = set(x.strip().strip('"') for x in vals.split(','))
+        return bool(vals & h)
+    # Categories and labels
+    h1, h2, h1lbl, h2lbl = ([set() for _ in range(len(splits)+1)] for _ in range(4))
+    sp2i, sp2lbl = {}, {}
+    # Add to category data structures
+    def addTo(isH1, isH2, i, species):
+        # add overlaps to both categories
+        if isH1: h1[i].add(species)
+        if isH2: h2[i].add(species)
+        if species not in sp2i: sp2i[species] = set()
+        sp2i[species].add(i)
     # Required fields
-    must = [trackLevel, groupLevel, 'max_ma', 'min_ma'] + fields
+    must = [trackLevel, 'max_ma', 'min_ma'] + fields
     for r in data:
         if any(x not in r for x in must): continue
-        isGroup = r[groupLevel] == group
         isH1 = isH2 = False
         for f in fields:
-            isH1 = isH1 or inter(r[f], h1)
-            isH2 = isH2 or inter(r[f], h2)
+            isH1 = isH1 or inter(r[f], h1desc)
+            isH2 = isH2 or inter(r[f], h2desc)
         e, l = float(r['max_ma']), float(r['min_ma'])
-        if l > start: continue
-        if e < end: continue
+        if l > start or e < end: continue
+        e = min(e, start)
+        l = max(l, end)
         eb = bisect.bisect_left(splits, e)
         lb = bisect.bisect_right(splits, l)
         assert lb <= eb
-        assert eb < len(h1t)
+        assert eb < len(h1)
         sp = r[trackLevel]
         lbl = lblFn(r)
         for i in range(lb, eb+1):
-            addTo(isGroup, isH1, isH2, i, sp)
+            addTo(isH1, isH2, i, sp)
             if isH1: h1lbl[i].add(lbl)
             if isH2: h2lbl[i].add(lbl)
         if sp not in sp2lbl: sp2lbl[sp] = set()
@@ -140,97 +150,150 @@ def fossilDistributions(data, field, h1_, h2_,
     # Remove singletons and add species throughout their ranges
     for species, intervals in sp2i.items():
         mini, maxi = min(intervals), max(intervals)
-        for h in h_:
-            if species in h[mini]:
-                if mini == maxi:
+        if mini == maxi:
+            # remove singleton
+            for h in (h1, h2):
+                if species in h[mini]:
                     h[mini].remove(species)
-                else:
-                    for j in range(mini+1, maxi):
+        else:
+            # propagate last environment occurrences
+            def which(j):
+                return [h for h in (h1, h2) if species in h[j]]
+            last = which(mini)
+            for j in range(mini+1, maxi):
+                curr = which(j)
+                if not curr:
+                    for h in last:
                         h[j].add(species)
+                else:
+                    last = curr
     # Prepare final list of fossil distributions
-    dists = [list(x) for x in zip(h1t, h1o, h2t, h2o)]
-    while not (dists[-1][0] or dists[-1][2]): 
+    dists = [list(x) for x in zip(h1, h2)]
+    # Eliminate empty intervals
+    while not any(dists[-1][i] for i in range(2)): 
         dists.pop()
         h1lbl.pop()
         h2lbl.pop()
     # Prepare times
     splits.insert(0, 0)
     times = [(splits[i]+splits[i+1])/2 for i in range(len(splits)-1)]
-    times = times[0:len(dists)]
-    while not (dists[0][0] or dists[0][2]):
+    times = times[:len(dists)]
+    dists = dists[:len(times)]  # Hmmm, need to work this out
+    # Eliminate empty intervals
+    while not any(dists[0][i] for i in range(2)):
         dists.pop(0)
         times.pop(0)
         h1lbl.pop(0)
         h2lbl.pop(0)
-    return times, dists, sp2lbl, [len(h1lbl[i])/(len(h1lbl[i])+len(h2lbl[i])) for i in range(len(h1lbl))]
-def affinityAnalysis(data, timeLevel=5, ret=False, degrees=10, doColor=False, **kwargs):
-    def location(r):
-        lat, lng = 'lat', 'lng'
-        if lat not in r or lng not in r:
-            return
-        def f(s): return math.floor(float(r[s])//degrees+0.5)
-        try:
-            return f(lng), f(lat)
-        except:
-            return
+    # Compute frequency of h1 labels relative to all labels for each interval
+    flbl = []
+    for i in range(len(h1lbl)):
+        x, y = len(h1lbl[i]), len(h2lbl[i])
+        if x+y == 0: 
+            flbl.append(None)
+        else:
+            flbl.append(x/(x+y))
+    return times, dists, sp2lbl, flbl
+
+def speciesInClades(data, trackLevel='accepted_name', groupLevel='order'):
+    g2s = {}
+    for r in data:
+        if trackLevel not in r or groupLevel not in r:
+            continue
+        nm = r[trackLevel]
+        gp = r[groupLevel]
+        if gp == '': continue
+        if gp not in g2s: g2s[gp] = set()
+        g2s[gp].add(nm)
+    return g2s
+
+def splitDists(dists, g2s, group='Scleractinia'):
+    rv = []
+    sp = g2s[group]
+    for h1, h2 in dists:
+        rv.append([h1&sp, h1-sp, h2&sp, h2-sp])
+    return rv
+
+def lenDist(d):
+    return [len(x) for x in d]
+
+def sortVarAffinity(data, dists, **kwargs):
+    g2s = speciesInClades(data, **kwargs)
+    gs = []
+    for g in g2s:
+        gdists = splitDists(dists, g2s, g)
+        affs = []
+        for d in gdists:
+            ld = lenDist(d)
+            if ld[0] or ld[2]: affs.append(naiveAffinity(ld, False))
+        if affs: gs.append((np.var(np.array(affs), ddof=0), g))
+    gs.sort()
+    gs.reverse()
+    return gs
+
+def plotAffinity(title, times, dists, sp2loc, color=None, **kwargs):
+    assert len(dists[0]) == 4
+    assert len(dists) == len(times)
+    fig = plt.figure()
+    def ld(d):
+        return [len(x) for x in d]
+    def f(dl, op, d):
+        ds = [ld([op(d[i][0], d[1-i][0]), 
+                  d[i][1], 
+                  op(d[i][2], d[1-i][2]), 
+                  d[i][3]]) for i in range(2)]
+        dl.append(pAffinityDiff(ds[1], ds[0], False, **kwargs))
+    def nlocs(sps):
+        locs = set()
+        for sp in sps:
+            locs = locs | sp2loc[sp]
+        return len(locs)
+    def flocs(d):
+        return nlocs(d[0]|d[2])/nlocs(reduce(set.union, d))
+    def plotHdis(ax, title, ps, diff, color=None):
+        hs = hdis(ps)
+        if diff:
+            x = [-(times[i]+times[i+1])/2 for i in range(len(times)-1)]
+        else:
+            x = [-x for x in times]
+        ax.set_title(title)
+        ax.set_xlim([-times[-1]-5, -times[0]+5])
+        ax.axhline(0 if diff else 0.5, color='black', linestyle=':')
+        ax.errorbar(x,
+                    [x[1] for x in hs],
+                    np.array([[x[1]-x[0] for x in hs],
+                              [x[2]-x[1] for x in hs]]),
+                    fmt='.', zorder=0)
+        if color:
+            im = ax.scatter(x, [x[1] for x in hs], c=color, cmap=mplt.cm.jet, 
+                            marker='.', zorder=100)
+            fig.colorbar(im)
+    dall, ddel, dana, deo = [], [], [], []
+    for i in range(len(dists)):
+        d0 = dists[i]
+        ld0 = ld(d0)
+        dall.append(pAffinity(ld0, False, **kwargs))
+        if i == 0: continue
+        d1 = dists[i-1]
+        ddel.append(pAffinityDiff(None, None, False, p1=dall[-2], p0=dall[-1], **kwargs))
+        f(dana, set.intersection, [d0, d1])
+        f(deo, set.difference, [d0, d1])
+    plotHdis(fig.add_subplot(4, 1, 1), title+' (affinity)', dall, False, color=color)
+    cc = color[:-1] if color else None
+    plotHdis(fig.add_subplot(4, 1, 2), 'Change: all', ddel, True, color=cc)
+    plotHdis(fig.add_subplot(4, 1, 3), 'Change: anagenetic', dana, True, color=cc)
+    plotHdis(fig.add_subplot(4, 1, 4), 'Change: extinction + origination', deo, True, color=cc)
+
+def affinityAnalysis(data, timeLevel=5, doColor=False, **kwargs):
     timesEnv, distsEnv, sp2locEnv, locEnv = fossilDistributions(
-            data, 'environment', shallow, deep, timeLevel=timeLevel, lblFn=location, **kwargs)
+            data, 'environment', shallow, deep, timeLevel=timeLevel, start=250, **kwargs)
     timesLit, distsLit, sp2locLit, locLit = fossilDistributions(
-            data, 'lithology*', carbonate, clastic, timeLevel=timeLevel, lblFn=location, **kwargs)
-    def aa(title, dists, times, sp2loc, loc):
-        assert len(dists) == len(times)
-        fig = plt.figure()
-        def ld(d):
-            return [len(x) for x in d]
-        def f(dl, op, d):
-            ds = [ld([op(d[i][0], d[1-i][0]), 
-                      d[i][1], 
-                      op(d[i][2], d[1-i][2]), 
-                      d[i][3]]) for i in range(2)]
-            dl.append(pAffinityDiff(ds[1], ds[0], False, **kwargs))
-        def nlocs(sps):
-            locs = set()
-            for sp in sps:
-                locs = locs | sp2loc[sp]
-            return len(locs)
-        def flocs(d):
-            return nlocs(d[0]|d[2]) #/nlocs(reduce(set.union, d))
-        def plotHdis(ax, title, ps, diff, color=None):
-            hs = hdis(ps)
-            if diff:
-                x = [-(times[i]+times[i+1])/2 for i in range(len(times)-1)]
-            else:
-                x = [-x for x in times]
-            ax.set_title(title)
-            ax.set_xlim([-times[-1]-5, -times[0]+5])
-            ax.axhline(0 if diff else 0.5, color='black', linestyle=':')
-            ax.errorbar(x,
-                        [x[1] for x in hs],
-                        np.array([[x[1]-x[0] for x in hs],
-                                  [x[2]-x[1] for x in hs]]),
-                        fmt='.', zorder=0)
-            if color:
-                im = ax.scatter(x, [x[1] for x in hs], c=color, cmap=mplt.cm.jet, 
-                                marker='.', zorder=100)
-                fig.colorbar(im)
-        dall, ddel, dana, deo, color = [], [], [], [], []
-        for i in range(len(dists)):
-            d0 = dists[i]
-            ld0 = ld(d0)
-            dall.append(pAffinity(ld0, False, **kwargs))
-            if doColor: color.append(loc[i])
-            if i == 0: continue
-            d1 = dists[i-1]
-            ddel.append(pAffinityDiff(None, None, False, p1=dall[-2], p0=dall[-1], **kwargs))
-            f(dana, set.intersection, [d0, d1])
-            f(deo, set.difference, [d0, d1])
-        plotHdis(fig.add_subplot(4, 1, 1), title+' (affinity)', dall, False, color=color)
-        plotHdis(fig.add_subplot(4, 1, 2), 'Change: all', ddel, True, color=color[:-1])
-        plotHdis(fig.add_subplot(4, 1, 3), 'Change: anagenetic', dana, True, color=color[:-1])
-        plotHdis(fig.add_subplot(4, 1, 4), 'Change: extinction + origination', deo, True, color=color[:-1])
-    aa('Environment: shallow/deep', distsEnv, timesEnv, sp2locEnv, locEnv)
-    aa('Lithology: carbonate/clastic', distsLit, timesLit, sp2locLit, locLit)
-    if ret: return timesEnv, distsEnv, timesLit, distsLit
+            data, 'lithology*', carbonate, clastic, timeLevel=timeLevel, start=250, **kwargs)
+    g2s = speciesInClades(data)
+    distsEnv = splitDists(distsEnv, g2s)
+    distsLit = splitDists(distsLit, g2s)
+    plotAffinity('Environment: shallow/deep', timesEnv, distsEnv, sp2locEnv, locEnv if doColor else None)
+    plotAffinity('Lithology: carbonate/clastic', timesLit, distsLit, sp2locLit, locLit if doColor else None)
 
 def redQueenQM(orig=0.20, extn=0.04, slope=.001, decayO=.0025, incrE=.0025, grid=1):
     '''Model in Quental & Marshall 2013. Default parameters create Fig 3D.'''

@@ -31,10 +31,11 @@ class DB:
                          'yellow','green','blue','brown','black','gray',
                          'red or brown','white'])
     
-    def __init__(self, db,
+    def __init__(self, 
+                 data=None, db=None,
                  time='time.csv', timeLevel=5,
-                 taxaName='accepted_name',
-                 data=None):
+                 taxaName='accepted_name'):
+        assert data or db
         self.taxaName = taxaName
         # dataset
         if data:
@@ -68,7 +69,13 @@ class DB:
             eb = bisect.bisect_left(self.timeSplits, e)
             lb = bisect.bisect_right(self.timeSplits, l)
             assert lb <= eb
-            self.bins[sp] = list(range(lb,eb+1))
+            assert lb == 0 or self.timeSplits[lb-1] <= l
+            assert eb == len(self.timeSplits) or self.timeSplits[eb] >= e
+            self.bins[sp] = (lb, eb)
+        # remove singletons: species that appear in only one bin
+        for sp, _ in self.range.items():
+            l, e = self.bins[sp]
+            if l == e: del self.bins[sp]
     
     # Typical splitting function
     def splitByLocation(self, degrees=30, modifier=''):
@@ -80,7 +87,7 @@ class DB:
                 if lat <= -180: lat += 360
                 if lng > 180: lng -= 360
                 if lng <= -180: lng += 360
-                mlat, mlng = math.ceil(lat/degrees), math.ceil(lng/degrees)
+                mlat, mlng = math.ceil(lat//degrees-0.5), math.ceil(lng//degrees-0.5)
                 return (mlat, mlng)
             except:
                 return 'No location'
@@ -95,14 +102,14 @@ class DB:
             part[k].append(r)
         dbs = {}
         for k, db in part.items():
-            dbs[k] = DB(db=None, timeLevel=self.timeLevel,
-                        taxaName=self.taxaName, data=db)
+            dbs[k] = DB(data=db, timeLevel=self.timeLevel, taxaName=self.taxaName)
         return dbs
 
     def species(self):
         '''Iterator over species in dataset.'''
         for sp in self.range:
             yield sp
+
     def fossilRange(self, species):
         '''Fossil range of species.'''
         return self.range[species]
@@ -116,8 +123,8 @@ class DB:
     def speciesByTime(self):
         '''List of species occurring in each time bin.'''
         bins = [[] for _ in range(len(self.timeSplits)+1)]
-        for sp, binIds in self.bins.items():
-            for binId in binIds:
+        for sp, (l,e) in self.bins.items():
+            for binId in range(l, e+1):
                 bins[binId].append(sp)
         return bins
 
