@@ -9,8 +9,8 @@ clean code.
 """
 
 from functools import reduce
-import operator as op
 from pbdbDb import DB
+from affinity import pAffinityDiff, hdis
 import random
 
 def plotFamilies(db, comps=[0,1,2], top=5):
@@ -83,256 +83,170 @@ def timeAnalysis(db, start=300):
     db.plot([0,1], db.colorByTime(start=start), species=scler)
     db.plotMeanPCAOverTime([0,1], species=scler, start=start)
 
-def fossilDistributions(data, field, h1_, h2_, start=260, timeLevel=5):
+def fossilDistributions(data, field, h1_, h2_, 
+                        groupLevel='order', group='Scleractinia',
+                        trackLevel='accepted_name',
+                        start=250, end=0, timeLevel=5,
+                        lblFn=lambda x: 0):
     with open('resources/time.csv') as f:
         splits = [float(t['max_ma']) for t in csv.DictReader(f) if 
                   int(t['scale_level']) == timeLevel]
         splits.sort()
     h1, h2 = set(h1_), set(h2_)
+    # Intersection of values with category.
     def inter(vals, h):
         vals = set(x.strip().strip('"') for x in vals.split(','))
         return bool(vals & h)
-    h1t = [0 for _ in range(len(splits))]
-    h1o, h2t, h2o = (h1t[:] for _ in range(3))
+    # Categories: h1/h2 taxon/other
+    h1t, h1o, h2t, h2o, h1lbl, h2lbl = ([set() for _ in range(len(splits)+1)] for _ in range(6))
     h_ = [h1o, h2o, h1t, h2t]
-    def addTo(isScler, isH1, isH2, i):
-        h_[2*isScler+isH2][i] += 1
+    sp2i, sp2lbl = {}, {}
+    # Add to category data structures
+    def addTo(isScler, isH1, isH2, i, species):
         # add overlaps to both categories
-        if isH1: h_[2*isScler][i] += 1
+        if isH1: h_[2*isScler][i].add(species)
+        if isH2: h_[2*isScler+1][i].add(species)
+        if species not in sp2i: sp2i[species] = set()
+        sp2i[species].add(i)
+    # Process fields
     if field[-1] == '*':
         fields = [field[:-1]+'1', field[:-1]+'2']
     else:
         fields = [field]
-    must = ['order', 'max_ma', 'min_ma'] + fields
+    # Required fields
+    must = [trackLevel, groupLevel, 'max_ma', 'min_ma'] + fields
     for r in data:
         if any(x not in r for x in must): continue
-        isScler = r['order'] == 'Scleractinia'
+        isGroup = r[groupLevel] == group
         isH1 = isH2 = False
         for f in fields:
             isH1 = isH1 or inter(r[f], h1)
             isH2 = isH2 or inter(r[f], h2)
         e, l = float(r['max_ma']), float(r['min_ma'])
-        if e > start: continue
+        if l > start: continue
+        if e < end: continue
         eb = bisect.bisect_left(splits, e)
         lb = bisect.bisect_right(splits, l)
-        assert lb <= eb and eb < len(h1t)
+        assert lb <= eb
+        assert eb < len(h1t)
+        sp = r[trackLevel]
+        lbl = lblFn(r)
         for i in range(lb, eb+1):
-            addTo(isScler, isH1, isH2, i)
-    dists = list(zip(h1t, h1o, h2t, h2o))
-    while not (dists[-1][0] or dists[-1][2]): dists.pop()
+            addTo(isGroup, isH1, isH2, i, sp)
+            if isH1: h1lbl[i].add(lbl)
+            if isH2: h2lbl[i].add(lbl)
+        if sp not in sp2lbl: sp2lbl[sp] = set()
+        if lbl is not None: sp2lbl[sp].add(lbl)
+    # Remove singletons and add species throughout their ranges
+    for species, intervals in sp2i.items():
+        mini, maxi = min(intervals), max(intervals)
+        for h in h_:
+            if species in h[mini]:
+                if mini == maxi:
+                    h[mini].remove(species)
+                else:
+                    for j in range(mini+1, maxi):
+                        h[j].add(species)
+    # Prepare final list of fossil distributions
+    dists = [list(x) for x in zip(h1t, h1o, h2t, h2o)]
+    while not (dists[-1][0] or dists[-1][2]): 
+        dists.pop()
+        h1lbl.pop()
+        h2lbl.pop()
+    # Prepare times
     splits.insert(0, 0)
     times = [(splits[i]+splits[i+1])/2 for i in range(len(splits)-1)]
     times = times[0:len(dists)]
-    return times, dists
-def affinityAnalysis(data, timeLevel=5, ret=False, **kwargs):
-    timesEnv, distsEnv = fossilDistributions(data, 'environment', shallow, deep, 
-                                             timeLevel=timeLevel)
-    timesLit, distsLit = fossilDistributions(data, 'lithology*', carbonate, clastic,
-                                             timeLevel=timeLevel)
-    plt.figure()
-    plt.title('Environment: shallow/deep')
-    pAffinityChanges(distsEnv, times=timesEnv, **kwargs)
-    plt.figure()
-    plt.title('Lithology: carbonate/clastic')
-    pAffinityChanges(distsLit, times=timesLit, **kwargs)
-    if ret: return timesEnv, distsEnv, timesLit, distsLit
-
-lncr_ = {}
-def lncr(N, Rs):
-    key = str(N) + ':' + ','.join(str(x) for x in Rs)
-    if key not in lncr_:
-        num = sum(math.log(x) for x in range(N, Rs[-1], -1))
-        den = sum(sum(math.log(x) for x in range(1, x+1)) for x in Rs[:-1])
-        lncr_[key] = num-den
-    return lncr_[key]
-def lmultinomial(N, Rs, Ps):
-    return lncr(N, Rs) + sum(Rs[i]*math.log(Ps[i]) for i in range(len(Ps)))
-def multinomial(N, Rs, Ps):
-    assert sum(Rs) == N
-    assert len(Rs) == len(Ps)
-    for i in range(len(Rs)):
-        if Ps[i] < 1e-5:
-            if Rs[i]: return 0
-            return multinomial(N, Rs[:i]+Rs[i+1:], Ps[:i]+Ps[i+1:])
-    return math.exp(lmultinomial(N, Rs, Ps))
-
-def hdi(x, pct=0.95):
-    '''Compute highest density interval on distribution x. Returns
-    (left, mode, right).'''
-    norm = sum(x)
-    i, s = max(enumerate(x), key=lambda x: x[1])
-    l, r = i-1, i+1
-    while s/norm < pct:
-        if l < 0:
-            s += x[r]
-            r += 1
-        elif r == len(x):
-            s += x[l]
-            l -= 1
-        elif x[l] > x[r]:
-            s += x[l]
-            l -= 1
-        else:
-            s += x[r]
-            r += 1
-    return (max(0,l), i, min(len(x)-1,r))
-def hdis(xs, pct=0.95):
-    '''Compute HDIs over sequence of x,y-defined distributions.'''
-    # compute hdis for each of cs in terms of mesh
-    hdis = []
-    for x in xs:
-        l, m, r = hdi(x[1], pct)
-        l, m, r = x[0][l], x[0][m], x[0][r]
-        hdis.append((l, m, r))
-    return hdis
-
-def naiveAffinity(dist, absAff):
-    try:
-        if absAff:
-            a, b = dist[0], dist[2]
-        else:
-            a, b = (dist[x+0]/(dist[x+0]+dist[x+1]) for x in (0,2))
-        return a/(a+b) if a+b else -1
-    except:
-        return -1
-
-def options(**kwargs):
-    class Options:
-        def __init__(self):
-            self.grid = 100
-            self.margin = False
-            self.smart = False
-            self.absAff = False
-            self.hdip = 0.95
-    o = Options()
-    for k, v in kwargs.items():
-        setattr(o, k, v)
-    return o
-
-def pAffinity(dist=[0,250,0,1000], plot=True, **kwargs):
-    '''For dist=[H1-taxa-fossil, H1-other, H2-taxa-fossil, H2-other],
-    compute the probability distribution of affinity for H1. When
-    margin=False, the computation uses the sample frequency of taxa
-    fossils, f, and H1 fossils, h; otherwise, it considers the joint
-    a-f-h distribution and marginalizes out f and h. For small samples,
-    the computed distributions differ w/ and w/o marginalizing, but
-    as the sampe size increases (for the same ratios), they converge.
-    grid controls the mesh granularity.'''
-    N = sum(dist)
-    if N == 0: return
-    opts = options(**kwargs)
-    def g(a,f,h):
-        # a = affinity for H1
-        # f = frequency of taxa of interest
-        # h = frequency of H1 samples compared to H2
-        # Let x, y be frequencies defining the four categories:
-        #  xh (1-x)h y(1-h) (1-y)(1-h)
-        # i.e., x is the proportion of taxa fossils in H1, y is
-        # the same in H2. We want
-        #  a = x/(x+y)
-        #  f = xh + y(1-h)
-        # Solving for x and y in terms of a, f, and h yields the
-        # following:
-        if not opts.absAff:
-            z = (1-a)/a
-            x = f/(h+z*(1-h))
-            y = z*x
-        else:
-            # instead, define a = xh/f
-            x = a*f/h
-            y = x*h/(1-h)*(1-a)/a
-        pcat = [x*h, (1-x)*h, y*(1-h), (1-y)*(1-h)]
-        if any(p < 0 or p > 1 for p in pcat):
-            return 0
-        return multinomial(N, dist, pcat)
-    mesh = np.linspace(1/opts.grid,1-1/opts.grid,opts.grid-1)
-    margin = opts.margin
-    if opts.smart:
-        margin = any(x < 10 for x in dist)
-    if margin:
-        # Marginalize, which can matter for small sample sizes
-        x = [sum(g(a,f,h) for f in mesh for h in mesh) for a in mesh]
-    else:
-        # Use sample means for f, h
-        f = (dist[0]+dist[2])/N
-        h = sum(dist[:2])/N
-        x = [g(a,f,h) for a in mesh]
-    unit = 1/opts.grid
-    s = sum(x)
-    if not s:
-        print(dist)
-    x = [e/s/unit for e in x]
-    if plot:
-        p = plt.plot(mesh, x)
-        l, _, r = hdi(x)
-        plt.axvline(mesh[l], color=p[-1].get_color(), linestyle=':')
-        plt.axvline(mesh[r], color=p[-1].get_color(), linestyle=':')
-        half = math.floor(0.5*(len(x)-1))
-        print('%.2f %.2f'%(unit*sum(x[:1+half]),
-                           naiveAffinity(dist, opts.absAff)))
-    return mesh, x
-
-def pAffinityChange(dist0, dist1, plot=True, p0=None, p1=None, **kwargs):
-    '''For two distributions as in pAffinity, compute the 
-    probability distribution of the change in affinity for H1.'''
-    p0 = pAffinity(dist0, plot=True, **kwargs)[1] if p0 is None else p0
-    p1 = pAffinity(dist1, plot=True, **kwargs)[1] if p1 is None else p1
-    opts = options(**kwargs)
-    x = [0 for _ in range(2*len(p0)+1)]
-    mesh = np.linspace(1/opts.grid,1-1/opts.grid,opts.grid-1)
-    for i, a0 in enumerate(mesh):
-        for j, a1 in enumerate(mesh):
-            d = a1-a0
-            x[int((d+1)*opts.grid+0.5)] += p0[i]*p1[j]/opts.grid
-    ls = np.linspace(-1+1/opts.grid,1-1/opts.grid,2*opts.grid-1)
-    if plot:
-        p = plt.plot(ls, x)
-        l, _, r = hdi(x)
-        plt.axvline(ls[l], color=p[-1].get_color(), linestyle=':')
-        plt.axvline(ls[r], color=p[-1].get_color(), linestyle=':')
-    return ls, x
-
-def pAffinityChanges(dists, times=None, wiggle=0, **kwargs):
-    '''Plot HDIs around modes of changes in affinity over given
-    sequence of fossil distributions.'''
-    # compute all affinity distributions silently
-    opts = options(**kwargs)
-    ps = [pAffinity(d, False, **kwargs) for d in dists]
-    phdis = hdis(ps, opts.hdip)
-    # compute difference distributions silently using ps
-    a, b = (1, 0) if times else (0, 1)
-    cs = [pAffinityChange(None, None, False, ps[i+a][1], ps[i+b][1], **kwargs) for
-          i in range(len(ps)-1)]
-    chdis = hdis(cs, opts.hdip)
-    for hs, offset in ((phdis, 0), (chdis, 0.5)):
-        if times:
-            if offset:
+    while not (dists[0][0] or dists[0][2]):
+        dists.pop(0)
+        times.pop(0)
+        h1lbl.pop(0)
+        h2lbl.pop(0)
+    return times, dists, sp2lbl, [len(h1lbl[i])/(len(h1lbl[i])+len(h2lbl[i])) for i in range(len(h1lbl))]
+def affinityAnalysis(data, timeLevel=5, ret=False, degrees=10, doColor=False, **kwargs):
+    def location(r):
+        lat, lng = 'lat', 'lng'
+        if lat not in r or lng not in r:
+            return
+        def f(s): return math.floor(float(r[s])//degrees+0.5)
+        try:
+            return f(lng), f(lat)
+        except:
+            return
+    timesEnv, distsEnv, sp2locEnv, locEnv = fossilDistributions(
+            data, 'environment', shallow, deep, timeLevel=timeLevel, lblFn=location, **kwargs)
+    timesLit, distsLit, sp2locLit, locLit = fossilDistributions(
+            data, 'lithology*', carbonate, clastic, timeLevel=timeLevel, lblFn=location, **kwargs)
+    def aa(title, dists, times, sp2loc, loc):
+        assert len(dists) == len(times)
+        fig = plt.figure()
+        def ld(d):
+            return [len(x) for x in d]
+        def f(dl, op, d):
+            ds = [ld([op(d[i][0], d[1-i][0]), 
+                      d[i][1], 
+                      op(d[i][2], d[1-i][2]), 
+                      d[i][3]]) for i in range(2)]
+            dl.append(pAffinityDiff(ds[1], ds[0], False, **kwargs))
+        def nlocs(sps):
+            locs = set()
+            for sp in sps:
+                locs = locs | sp2loc[sp]
+            return len(locs)
+        def flocs(d):
+            return nlocs(d[0]|d[2]) #/nlocs(reduce(set.union, d))
+        def plotHdis(ax, title, ps, diff, color=None):
+            hs = hdis(ps)
+            if diff:
                 x = [-(times[i]+times[i+1])/2 for i in range(len(times)-1)]
             else:
                 x = [-x for x in times]
-        else:
-            x = [x+offset+wiggle for x in range(len(hs))]
-        plt.errorbar(x, 
-                     [x[1] for x in hs],
-                     np.array([[x[1]-x[0] for x in hs], 
-                               [x[2]-x[1] for x in hs]]),
-                     fmt='.')
+            ax.set_title(title)
+            ax.set_xlim([-times[-1]-5, -times[0]+5])
+            ax.axhline(0 if diff else 0.5, color='black', linestyle=':')
+            ax.errorbar(x,
+                        [x[1] for x in hs],
+                        np.array([[x[1]-x[0] for x in hs],
+                                  [x[2]-x[1] for x in hs]]),
+                        fmt='.', zorder=0)
+            if color:
+                im = ax.scatter(x, [x[1] for x in hs], c=color, cmap=mplt.cm.jet, 
+                                marker='.', zorder=100)
+                fig.colorbar(im)
+        dall, ddel, dana, deo, color = [], [], [], [], []
+        for i in range(len(dists)):
+            d0 = dists[i]
+            ld0 = ld(d0)
+            dall.append(pAffinity(ld0, False, **kwargs))
+            if doColor: color.append(loc[i])
+            if i == 0: continue
+            d1 = dists[i-1]
+            ddel.append(pAffinityDiff(None, None, False, p1=dall[-2], p0=dall[-1], **kwargs))
+            f(dana, set.intersection, [d0, d1])
+            f(deo, set.difference, [d0, d1])
+        plotHdis(fig.add_subplot(4, 1, 1), title+' (affinity)', dall, False, color=color)
+        plotHdis(fig.add_subplot(4, 1, 2), 'Change: all', ddel, True, color=color[:-1])
+        plotHdis(fig.add_subplot(4, 1, 3), 'Change: anagenetic', dana, True, color=color[:-1])
+        plotHdis(fig.add_subplot(4, 1, 4), 'Change: extinction + origination', deo, True, color=color[:-1])
+    aa('Environment: shallow/deep', distsEnv, timesEnv, sp2locEnv, locEnv)
+    aa('Lithology: carbonate/clastic', distsLit, timesLit, sp2locLit, locLit)
+    if ret: return timesEnv, distsEnv, timesLit, distsLit
 
-def simulateAffinity(N, start=[10,40,15,10], delta=10, **kwargs):
-    dists = [np.array(start)]
-    for _ in range(N-1):
-        ch = np.array([random.randint(-delta, delta) for _ in dists[-1]])
-        dists.append(dists[-1]+np.array(ch))
-        for i in range(len(dists[-1])):
-            if dists[-1][i] < 0:
-                dists[-1][i] = 0
-    for absAff in [False, True]:
-        pAffinityChanges([x.tolist() for x in dists],
-                          absAff=absAff, wiggle=0.1*absAff, **kwargs)
-        na = [naiveAffinity(d, absAff) for d in dists]
-        nca = [na[i+1]-na[i] for i in range(len(na)-1)]
-        nca.insert(0, 0)
-        print('in n-aff n-afc | h1t h1o h2t h2o')
-        for i in range(len(na)):
-            print('%2d % .2f % .2f | %s'%(i, na[i], nca[i],
-                                         ' '.join('%3d'%x for x in dists[i])))
+def redQueenQM(orig=0.20, extn=0.04, slope=.001, decayO=.0025, incrE=.0025, grid=1):
+    '''Model in Quental & Marshall 2013. Default parameters create Fig 3D.'''
+    div = [1]
+    first = True
+    mesh = np.linspace(0, 1000, grid*1000)
+    for time in mesh:
+        o = orig - slope*div[-1]
+        e = extn + slope*div[-1]
+        if first and o <= e:
+            first = False
+            eq = time
+        div.append(div[-1]*(1+(o-e)/grid))
+        if div[-1] <= 1: break
+        orig -= decayO/grid
+        extn += incrE/grid
+    mesh = mesh[:len(div)]
+    plt.plot(mesh, div)
+    plt.axvline(eq, linestyle=':')
