@@ -8,9 +8,14 @@ A file for exploratory code. Fruitful explorations will be rewritten into
 clean code.
 """
 
-from functools import reduce
-from pbdbDb import DB
 from affinity import *
+import bisect
+import csv
+from functools import reduce
+import matplotlib as mplt
+import matplotlib.pyplot as plt
+import numpy as np
+from pbdbDb import DB
 import random
 
 def plotFamilies(db, comps=[0,1,2], top=5):
@@ -97,7 +102,7 @@ def fossilDistributions(data, field, h1_, h2_,
                         trackLevel='accepted_name',
                         timeLevel=5,
                         lblFn=location,
-                        start=550, end=0):
+                        start=541, end=0):
     # Time splits
     with open('resources/time.csv') as f:
         splits = [float(t['max_ma']) for t in csv.DictReader(f) if 
@@ -114,7 +119,7 @@ def fossilDistributions(data, field, h1_, h2_,
         vals = set(x.strip().strip('"') for x in vals.split(','))
         return bool(vals & h)
     # Categories and labels
-    h1, h2, h1lbl, h2lbl = ([set() for _ in range(len(splits)+1)] for _ in range(4))
+    h1, h2, h1lbl, h2lbl = ([set() for _ in range(len(splits))] for _ in range(4))
     sp2i, sp2lbl = {}, {}
     # Add to category data structures
     def addTo(isH1, isH2, i, species):
@@ -137,6 +142,9 @@ def fossilDistributions(data, field, h1_, h2_,
         l = max(l, end)
         eb = bisect.bisect_left(splits, e)
         lb = bisect.bisect_right(splits, l)
+        if lb > eb:
+            assert e == l
+            lb = eb
         assert lb <= eb
         assert eb < len(h1)
         sp = r[trackLevel]
@@ -178,7 +186,6 @@ def fossilDistributions(data, field, h1_, h2_,
     splits.insert(0, 0)
     times = [(splits[i]+splits[i+1])/2 for i in range(len(splits)-1)]
     times = times[:len(dists)]
-    dists = dists[:len(times)]  # Hmmm, need to work this out
     # Eliminate empty intervals
     while not any(dists[0][i] for i in range(2)):
         dists.pop(0)
@@ -207,29 +214,14 @@ def speciesInClades(data, trackLevel='accepted_name', groupLevel='order'):
         g2s[gp].add(nm)
     return g2s
 
-def splitDists(dists, g2s, group='Scleractinia'):
+def splitDists(dists, sp):
     rv = []
-    sp = g2s[group]
     for h1, h2 in dists:
         rv.append([h1&sp, h1-sp, h2&sp, h2-sp])
     return rv
 
 def lenDist(d):
     return [len(x) for x in d]
-
-def sortVarAffinity(data, dists, **kwargs):
-    g2s = speciesInClades(data, **kwargs)
-    gs = []
-    for g in g2s:
-        gdists = splitDists(dists, g2s, g)
-        affs = []
-        for d in gdists:
-            ld = lenDist(d)
-            if ld[0] or ld[2]: affs.append(naiveAffinity(ld, False))
-        if affs: gs.append((np.var(np.array(affs), ddof=0), g))
-    gs.sort()
-    gs.reverse()
-    return gs
 
 def plotAffinity(title, times, dists, sp2loc, color=None, **kwargs):
     assert len(dists[0]) == 4
@@ -250,14 +242,25 @@ def plotAffinity(title, times, dists, sp2loc, color=None, **kwargs):
         return len(locs)
     def flocs(d):
         return nlocs(d[0]|d[2])/nlocs(reduce(set.union, d))
+    xx = None
     def plotHdis(ax, title, ps, diff, color=None):
+        nonlocal xx
+        if color: color = color[:]
         hs = hdis(ps)
         if diff:
             x = [-(times[i]+times[i+1])/2 for i in range(len(times)-1)]
         else:
             x = [-x for x in times]
+        for i in (0, -1):
+            while hs[i][2]-hs[i][0] > 0.5:
+                hs.pop(i)
+                x.pop(i)
+                if color: color.pop(i)
+                if not hs: return
         ax.set_title(title)
-        ax.set_xlim([-times[-1]-5, -times[0]+5])
+        if not diff:
+            xx = x[-1]-5, x[0]+5
+        ax.set_xlim(xx)
         ax.axhline(0 if diff else 0.5, color='black', linestyle=':')
         ax.errorbar(x,
                     [x[1] for x in hs],
@@ -283,6 +286,54 @@ def plotAffinity(title, times, dists, sp2loc, color=None, **kwargs):
     plotHdis(fig.add_subplot(4, 1, 2), 'Change: all', ddel, True, color=cc)
     plotHdis(fig.add_subplot(4, 1, 3), 'Change: anagenetic', dana, True, color=cc)
     plotHdis(fig.add_subplot(4, 1, 4), 'Change: extinction + origination', deo, True, color=cc)
+
+class EnvAffinity:
+    def __init__(self, data, field, h1desc, h2desc,
+                 trackLevel='accepted_name',
+                 timeLevel=5):
+        self.data = data
+        self.field = field
+        self.trackLevel = trackLevel
+        self.times, self.dists, self.sp2loc, self.floc = fossilDistributions(
+                data, field, h1desc, h2desc, trackLevel)
+    def focusOn(self, groupLevel='order'):
+        self.g2s = speciesInClades(self.data, self.trackLevel, groupLevel)
+        gs = []
+        for g in self.g2s:
+            sp = self.g2s[g]
+            gdists = splitDists(self.dists, sp)
+            affs = []
+            for d in gdists:
+                ld = lenDist(d)
+                if ld[0] + ld[2] >= 10:  # kind of arbitrary choice
+                    affs.append(naiveAffinity(ld, False))
+            if affs: 
+                gs.append((math.floor(math.log(len(sp), 2)), max(affs)-min(affs), g))
+        gs.sort()
+        gs.reverse()
+        for i in range(len(gs)):
+            if gs[i][0] < 9:
+                gs = gs[:i]
+                break
+        self.interesting = [(i, g[-1], len(self.g2s[g[-1]]), g[1]) for i, g in enumerate(gs)]
+        return self.interesting
+    def plot(self, idx, start=None, end=None, **kwargs):
+        assert hasattr(self, 'interesting')
+        assert 0 <= idx and idx < len(self.interesting)
+        gp = self.interesting[idx][1]
+        sp = self.g2s[gp]
+        times, dists, floc = self.times[:], splitDists(self.dists, sp), self.floc[:]
+        while ((start is not None and times[-1] > start) or 
+                (not dists[-1][0] and not dists[-1][2])):
+            times.pop()
+            dists.pop()
+            floc.pop()
+        while ((end is not None and times[0] < end) or
+                (not dists[0][0] and not dists[0][2])):
+            times.pop(0)
+            dists.pop(0)
+            floc.pop(0)
+        plotAffinity(gp+': '+self.field, times, dists, self.sp2loc, floc, **kwargs)
 
 def affinityAnalysis(data, timeLevel=5, doColor=False, **kwargs):
     timesEnv, distsEnv, sp2locEnv, locEnv = fossilDistributions(
