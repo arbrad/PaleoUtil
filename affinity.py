@@ -76,6 +76,8 @@ def options(**kwargs):
         def __init__(self):
             self.grid = 100
             self.margin = False
+            self.marginf = False
+            self.marginh = False
             self.smart = False
             self.absAff = False
             self.hdip = 0.95
@@ -123,17 +125,17 @@ def pAffinity(dist=[0,250,0,1000], plot=True, **kwargs):
     mesh = np.linspace(1/opts.grid,1-1/opts.grid,opts.grid-1)
     if N == 0: 
         return mesh, [1 for _ in mesh]
-    margin = opts.margin
+    marginf = marginh = opts.margin
+    marginf = marginf or opts.marginf
+    marginh = marginh or opts.marginh
     if opts.smart:
-        margin = any(x < 10 for x in dist)
-    if margin:
-        # Marginalize, which can matter for small sample sizes
-        x = [sum(g(a,f,h) for f in mesh for h in mesh) for a in mesh]
-    else:
-        # Use sample means for f, h
-        f = (dist[0]+dist[2])/N
-        h = sum(dist[:2])/N
-        x = [g(a,f,h) for a in mesh]
+        # for almost all situations, marginalizing just one, especially f,
+        # is sufficient
+        marginf = marginf or any(x < 10 for x in dist)
+        marginh = marginh or any(dist[i]+dist[i+1] < 2 for i in (0, 2))
+    meshf = mesh if marginf else [(dist[0]+dist[2])/N]
+    meshh = mesh if marginh else [sum(dist[:2])/N]
+    x = [sum(g(a,f,h) for f in meshf for h in meshh) for a in mesh]
     unit = 1/opts.grid
     s = sum(x)
     if not s:
