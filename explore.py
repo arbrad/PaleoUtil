@@ -287,7 +287,7 @@ def plotAffinity(title, times, dists, sp2loc, color=None, **kwargs):
     plotHdis(fig.add_subplot(4, 1, 3), 'Change: anagenetic', dana, True, color=cc)
     plotHdis(fig.add_subplot(4, 1, 4), 'Change: extinction + origination', deo, True, color=cc)
 
-def plotAffinityByRange(title, dists, sp2loc, color=None, **kwargs):
+def plotAffinityByRange(title, times, dists, sp2loc, **kwargs):
     def nlocs(sps):
         locs = set()
         for sp in sps:
@@ -302,11 +302,10 @@ def plotAffinityByRange(title, dists, sp2loc, color=None, **kwargs):
         r2h[r].append((h, i))
     xy = []
     for r, hs in r2h.items():
-        for h, i in hs:
-            xy.append((r+i/len(hs), h, None if color is None else color[i]))
+        for j, (h, i) in enumerate(hs):
+            xy.append((r+j/len(hs), h, times[i]))
     xy.sort()
     x, y, c = [list(x) for x in zip(*xy)]
-    if color is not None: color = c
     fig = plt.figure()
     ax = fig.add_subplot(1, 1, 1)
     ax.set_title(title)
@@ -316,10 +315,9 @@ def plotAffinityByRange(title, dists, sp2loc, color=None, **kwargs):
                 np.array([[x[1]-x[0] for x in y],
                           [x[2]-x[1] for x in y]]),
                 fmt='.')
-    if color:
-        im = ax.scatter(x, [x[1] for x in y], c=color, cmap=mplt.cm.jet, 
-                        marker='.', zorder=100)
-        fig.colorbar(im)
+    im = ax.scatter(x, [x[1] for x in y], c=c, cmap=mplt.cm.jet, 
+                    marker='.', zorder=100)
+    fig.colorbar(im)
 
 class EnvAffinity:
     def __init__(self, data, field, h1desc, h2desc,
@@ -385,8 +383,8 @@ class EnvAffinity:
     def plotByRange(self, idx, **kwargs):
         gp = self.group(idx)
         sp = self.g2s[gp]
-        _, dists, floc = self.trim(splitDists(self.dists, sp))
-        plotAffinityByRange(gp+': '+self.field, dists, self.sp2loc, floc, **kwargs)
+        times, dists, _ = self.trim(splitDists(self.dists, sp))
+        plotAffinityByRange(gp+': '+self.field, times, dists, self.sp2loc, **kwargs)
     def plots(self, idx, **kwargs):
         self.plotByTime(idx, **kwargs)
         self.plotByRange(idx, **kwargs)
