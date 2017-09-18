@@ -7,7 +7,9 @@ Created on Sun Sep 10 15:48:10 2017
 
 import math
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import axes3d
 import numpy as np
+from scipy.stats import binom
 
 lncr_ = {}
 def lncr(Rs):
@@ -81,6 +83,7 @@ def options(**kwargs):
             self.smart = False
             self.absAff = False
             self.hdip = 0.95
+            self.simple = False
     o = Options()
     for k, v in kwargs.items():
         setattr(o, k, v)
@@ -133,22 +136,51 @@ def pAffinity(dist=[0,250,0,1000], plot=True, **kwargs):
         # is sufficient
         marginf = marginf or any(x < 10 for x in dist)
         marginh = marginh or any(dist[i]+dist[i+1] < 2 for i in (0, 2))
-    meshf = mesh if marginf else [(dist[0]+dist[2])/N]
-    meshh = mesh if marginh else [sum(dist[:2])/N]
-    x = [sum(g(a,f,h) for f in meshf for h in meshh) for a in mesh]
+    if opts.simple or not (marginf or marginh):
+        n = dist[0]+dist[2]
+        k = dist[0]
+        h = sum(dist[:2])/N
+        def g(a):
+            z = (1-a)/a
+            p = 1/(h+z*(1-h))*h
+            return binom.pmf(k, n, p)
+        x = [g(a) for a in mesh]
+    else:
+        meshf = mesh if marginf else [(dist[0]+dist[2])/N]
+        meshh = mesh if marginh else [sum(dist[:2])/N]
+        x = [sum(g(a,f,h) for f in meshf for h in meshh) for a in mesh]
     unit = 1/opts.grid
     s = sum(x)
     if not s:
-        print(dist)
+        pass #print(dist)
     x = [e/s/unit for e in x]
-    if plot:
-        p = plt.plot(mesh, x)
-        l, _, r = hdi(x)
-        plt.axvline(mesh[l], color=p[-1].get_color(), linestyle=':')
-        plt.axvline(mesh[r], color=p[-1].get_color(), linestyle=':')
-        half = math.floor(0.5*(len(x)-1))
-        print('%.2f %.2f'%(unit*sum(x[:1+half]),
-                           naiveAffinity(dist, opts.absAff)))
+    if plot: 
+        _plotAffinity(mesh, x)
+        print('%.2f'%naiveAffinity(dist, opts.absAff))
+    return mesh, x
+
+def _plotAffinity(mesh, x):
+    p = plt.plot(mesh, x)
+    l, _, r = hdi(x)
+    plt.axvline(mesh[l], color=p[-1].get_color(), linestyle=':')
+    plt.axvline(mesh[r], color=p[-1].get_color(), linestyle=':')
+
+def pAffinityPct(a, b, h, plot=True, **kwargs):
+    opts = options(**kwargs)
+    def g(a):
+        z = (1-a)/a
+        p = h/(h+z*(1-h))
+        return binom.pmf(k, n, p)
+    n = a+b
+    k = a
+    mesh = np.linspace(1/opts.grid,1-1/opts.grid,opts.grid-1)
+    x = [g(a) for a in mesh]
+    s = sum(x)
+    x = [e/s*opts.grid for e in x]
+    if plot: 
+        _plotAffinity(mesh, x)
+        na = a*(1-h)/(a*(1-h) + b*h)
+        print('%.2f'%na)    
     return mesh, x
 
 def pAffinityDiff(dist1, dist0, plot=True, p1=None, p0=None, **kwargs):

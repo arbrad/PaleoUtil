@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pbdbDb import DB
 import random
+import sympy
 
 def plotFamilies(db, comps=[0,1,2], top=5):
     fam2sp = db.fieldSubsets('family', db.fieldSubset('order', 'Scleractinia'))
@@ -100,9 +101,10 @@ def location(r, latm=10, lngm=10):
 
 def fossilDistributions(data, field, h1_, h2_, 
                         trackLevel='accepted_name',
-                        timeLevel=5,
+                        timeLevel=5, timef=lambda x: x,
                         lblFn=location,
-                        start=541, end=0):
+                        start=541, end=0,
+                        dropSingle=True):
     # Time splits
     with open('resources/time.csv') as f:
         splits = [float(t['max_ma']) for t in csv.DictReader(f) if 
@@ -136,7 +138,8 @@ def fossilDistributions(data, field, h1_, h2_,
         for f in fields:
             isH1 = isH1 or inter(r[f], h1desc)
             isH2 = isH2 or inter(r[f], h2desc)
-        e, l = float(r['max_ma']), float(r['min_ma'])
+        e, l = timef(float(r['max_ma'])), timef(float(r['min_ma']))
+        assert l <= e
         if l > start or e < end: continue
         e = min(e, start)
         l = max(l, end)
@@ -158,7 +161,7 @@ def fossilDistributions(data, field, h1_, h2_,
     # Remove singletons and add species throughout their ranges
     for species, intervals in sp2i.items():
         mini, maxi = min(intervals), max(intervals)
-        if mini == maxi:
+        if dropSingle and mini == maxi:
             # remove singleton
             for h in (h1, h2):
                 if species in h[mini]:
@@ -167,8 +170,8 @@ def fossilDistributions(data, field, h1_, h2_,
             # propagate last environment occurrences
             def which(j):
                 return [h for h in (h1, h2) if species in h[j]]
-            last = which(mini)
-            for j in range(mini+1, maxi):
+            last = which(maxi)
+            for j in range(maxi-1, mini, -1):
                 curr = which(j)
                 if not curr:
                     for h in last:
@@ -208,11 +211,13 @@ def speciesInClades(data, trackLevel='accepted_name', groupLevel='order',
     for r in data:
         if trackLevel not in r or groupLevel not in r:
             continue
-        if restrictLevel and restrict and restrictLevel not in r:
+        if restrictLevel and restrictLevel not in r:
             continue
         if restrictLevel:
             rg = r[restrictLevel]
-            if rg != restrict: continue
+            if ((type(restrict) == set and rg not in restrict) or 
+                (type(restrict) == str and rg != restrict)):
+                continue
         nm = r[trackLevel]
         gp = r[groupLevel]
         if nm == '' or gp == '': continue
@@ -229,10 +234,10 @@ def splitDists(dists, sp):
 def lenDist(d):
     return [len(x) for x in d]
 
-def plotAffinity(title, times, dists, sp2loc, color=None, **kwargs):
+def plotAffinity(title, times, dists, sp2loc, color=None, ax=None, xx=None, **kwargs):
     assert len(dists[0]) == 4
     assert len(dists) == len(times)
-    fig = plt.figure()
+    if not ax: fig = plt.figure()
     def ld(d): return lenDist(d)
     def f(dl, op, d):
         ds = [ld([op(d[i][0], d[1-i][0]), 
@@ -242,7 +247,6 @@ def plotAffinity(title, times, dists, sp2loc, color=None, **kwargs):
         dl.append(pAffinityDiff(ds[1], ds[0], False, **kwargs))
     def flocs(d):
         return nlocs(d[0]|d[2])/nlocs(reduce(set.union, d))
-    xx = None
     def plotHdis(ax, title, ps, diff, color=None):
         nonlocal xx
         if color: color = color[:]
@@ -258,7 +262,7 @@ def plotAffinity(title, times, dists, sp2loc, color=None, **kwargs):
                 if color: color.pop(i)
                 if not hs: return
         ax.set_title(title)
-        if not diff:
+        if not diff and not xx:
             xx = x[-1]-5, x[0]+5
         ax.set_xlim(xx)
         ax.axhline(0 if diff else 0.5, color='black', linestyle=':')
@@ -281,13 +285,17 @@ def plotAffinity(title, times, dists, sp2loc, color=None, **kwargs):
         ddel.append(pAffinityDiff(None, None, False, p1=dall[-2], p0=dall[-1], **kwargs))
         f(dana, set.intersection, [d0, d1])
         f(deo, set.difference, [d0, d1])
-    plotHdis(fig.add_subplot(4, 1, 1), title+' (affinity)', dall, False, color=color)
-    cc = color[:-1] if color else None
-    plotHdis(fig.add_subplot(4, 1, 2), 'Change: all', ddel, True, color=cc)
-    plotHdis(fig.add_subplot(4, 1, 3), 'Change: anagenetic', dana, True, color=cc)
-    plotHdis(fig.add_subplot(4, 1, 4), 'Change: extinction + origination', deo, True, color=cc)
+    if ax:
+        plotHdis(ax, title+' (affinity)', dall, False, color=color)
+    else:
+        plotHdis(fig.add_subplot(4, 1, 1), title+' (affinity)', dall, False, color=color)
+        cc = color[:-1] if color else None
+        plotHdis(fig.add_subplot(4, 1, 2), 'Change: all', ddel, True, color=cc)
+        plotHdis(fig.add_subplot(4, 1, 3), 'Change: anagenetic', dana, True, color=cc)
+        plotHdis(fig.add_subplot(4, 1, 4), 'Change: extinction + origination', deo, True, color=cc)
+        fig.tight_layout()
 
-def plotAffinityByRange(title, times, dists, sp2loc, **kwargs):
+def plotAffinityByRange(title, times, dists, sp2loc, start=541, end=0, **kwargs):
     def nlocs(sps):
         locs = set()
         for sp in sps:
@@ -295,6 +303,7 @@ def plotAffinityByRange(title, times, dists, sp2loc, **kwargs):
         return len(locs)
     r2h = {}
     for i, d in enumerate(dists):
+        if times[i] > start or times[i] < end: continue
         r = nlocs(d[0]|d[2])
         p = pAffinity(lenDist(d), False, **kwargs)
         h = hdis([p])[0]
@@ -322,14 +331,14 @@ def plotAffinityByRange(title, times, dists, sp2loc, **kwargs):
 class EnvAffinity:
     def __init__(self, data, field, h1desc, h2desc,
                  trackLevel='accepted_name',
-                 timeLevel=5,
+                 timeLevel=5, timef=lambda x: x, dropSingle=True,
                  latDegrees=10, lngDegrees=10):
         self.data = data
         self.field = field
         self.trackLevel = trackLevel
         loc = lambda r: location(r, latDegrees, lngDegrees)
         self.times, self.dists, self.sp2loc, self.floc = fossilDistributions(
-                data, field, h1desc, h2desc, trackLevel, lblFn=loc)
+                data, field, h1desc, h2desc, trackLevel, lblFn=loc, timef=timef, dropSingle=dropSingle)
     def focusOn(self, groupLevel='order', threshold=9, **kwargs):
         self.g2s = speciesInClades(self.data, self.trackLevel, groupLevel, **kwargs)
         gs = []
@@ -375,11 +384,11 @@ class EnvAffinity:
             dists.pop(0)
             floc.pop(0)
         return times, dists, floc
-    def plotByTime(self, idx, start=None, end=None, **kwargs):
+    def plotByTime(self, idx, start=None, end=None, color=True, ax=None, **kwargs):
         gp = self.group(idx)
         sp = self.g2s[gp]
         times, dists, floc = self.trim(splitDists(self.dists, sp), start, end)
-        plotAffinity(gp+': '+self.field, times, dists, self.sp2loc, floc, **kwargs)
+        plotAffinity(gp+': '+self.field, times, dists, self.sp2loc, floc if color else None, ax, **kwargs)
     def plotByRange(self, idx, **kwargs):
         gp = self.group(idx)
         sp = self.g2s[gp]
@@ -418,3 +427,94 @@ def redQueenQM(orig=0.20, extn=0.04, slope=.001, decayO=.0025, incrE=.0025, grid
     mesh = mesh[:len(div)]
     plt.plot(mesh, div)
     plt.axvline(eq, linestyle=':')
+    
+def bivalve(data, biDb=None, smart=True, file=None):
+    if not biDb:
+        biDb = DB(db='../../Paleo/Simpson/Corals/pbdb_bivalvia_091317.csv').data
+    if file:
+        file = open(file, 'w')
+    hasComp = [r for r in biDb if r['composition'] != '']
+    cal = set([r['accepted_name'] for r in hasComp if r['composition'] == 'aragonite'])
+    ara = set([r['accepted_name'] for r in hasComp if r['composition'] != 'aragonite'])
+    both = cal | ara
+    ncarb, nclas = 0, 0
+    c2c, a2c = {}, {}
+    ca, cl = set(carbonate), set(clastic)
+    for r in data:
+        nm = r['accepted_name']
+        lith = r['lithology1']+','+r['lithology2']
+        lith = lith.split(',')
+        lith = set([x.strip().strip('"') for x in lith])
+        carb = bool(lith & ca)
+        clas = bool(lith & cl)
+        ncarb += carb
+        nclas += clas
+        if nm not in both: continue
+        g = r['genus']
+        if g == '': continue
+        if nm in cal:
+            if g not in c2c: c2c[g] = [0, 0]
+            if carb: c2c[g][0] += 1
+            if clas: c2c[g][1] += 1
+        if nm in ara:
+            if g not in a2c: a2c[g] = [0, 0]
+            if carb: a2c[g][0] += 1
+            if clas: a2c[g][1] += 1
+    print(ncarb, nclas)
+    for title, g2c in (('Aragonite', a2c), ('Calcite', c2c)):
+        n1, nm, n2, t1, t2 = 0, 0, 0, 0, 0
+        gs = []
+        for g, cnts in g2c.items():
+            d = [cnts[0], ncarb-cnts[0], cnts[1], nclas-cnts[1]]
+            t1 += cnts[0]
+            t2 += cnts[1]
+            try:
+                h = hdis([pAffinity(d, False, smart=smart)])[0]
+            except:
+                # floating point issues
+                continue
+            mixed = False
+            if h[0] > 0.5: 
+                n1 += 1
+            elif h[2] < 0.5: 
+                n2 += 1
+            else:
+                nm += 1
+                mixed = True
+            if not mixed:
+                gs.append(((h[0] > 0.5, h[2] < 0.5, h[2]-h[1], g), 
+                           '  %-32s: %.2f %.2f %.2f'%(g, h[0], h[1], h[2])))
+        gs.sort()
+        print('%s: carbonate: %d, mixed: %d, clastic: %d'%(title, n1, nm, n2), file=file)
+        h = hdis([pAffinity([t1, ncarb-t1, t2, nclas-t2], False, smart=smart)])[0]
+        print('  Affinity: %.2f %.2f %.2f'%(h[0], h[1], h[2]), file=file)
+        for _, s in gs:
+            print(s, file=file)
+    if file: file.close()
+
+def scenario3(data):
+    lit = EnvAffinity(data, 'lithology*', carbonate, clastic)
+    fig = plt.figure()
+    lit.focusOn('class')
+    ax = fig.add_subplot(3,1,1)
+    lit.plotByTime('Gastropoda', color=False, ax=ax, xx=[-541,0])
+    ax = fig.add_subplot(3,1,3)
+    lit.plotByTime('Bivalvia', color=False, ax=ax, xx=[-541,0])
+    lit.focusOn('phylum')
+    ax = fig.add_subplot(3,1,2)
+    lit.plotByTime('Brachiopoda', color=False, ax=ax, xx=[-541,0])
+    fig.tight_layout()
+
+def affinityIsMode():
+    a, h, m, n = sympy.symbols("a h m n")
+    p = (a*h)/(a*h + (1-a)*(1-h))
+    x = p**m * (1-p)**n
+    return sympy.solve(sympy.Eq(sympy.diff(x, a)))
+def affinityIsNotMode():
+    a, h, f, g, m, n, o, p = sympy.symbols("a h f g m n o p")
+    z = (1-a)/a
+    f0 = f/(h+z*(1-h))
+    f1 = z*f0
+    #f0, f1 = f, g
+    x = (f0*h)**m * ((1-f0)*h)**n * (f1*(1-h))**o * ((1-f1)*(1-h))**p
+    return sympy.solve(sympy.Eq(sympy.diff(x, a)))
