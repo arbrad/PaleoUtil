@@ -524,7 +524,7 @@ class EnvAffinity:
         times, dists, floc = self.trim(splitDists(self.dists, sp))
         h = None if self.macro else [0.5 for _ in times]
         plotAffinityByRange(gp+': '+self.field, times, dists, self.sp2loc, hf=h, **kwargs)
-    def plotGenera(self, taxon, level='family', ax=None, **kwargs):
+    def plotGenera(self, taxon, level='family', ax=None, thresh=0.5, **kwargs):
         g2s = speciesInClades(self.data, self.trackLevel, 'genus', restrictLevel=level, restrict=taxon)
         g2c = {g:[0,0] for g in g2s}
         if self.macro:
@@ -551,19 +551,35 @@ class EnvAffinity:
                 p = pAffinity([t0, h0-t0, t1, h1-t1], False, **kwargs)
             else:
                 p = pAffinityPct(t0, t1, 0.5, False, **kwargs)
-            ps.append(p)
+            ps.append((g, p))
         if not ps: return
-        mesh = ps[0][0]
+        mesh = ps[0][1][0]
         x = np.zeros((len(mesh),))
-        for _, p in ps:
+        for _, (_, p) in ps:
             x += np.array(p)
         s = sum(x)/(len(mesh)+1)
         x = [e/s for e in x]
-        if not ax:
+        nax = ax is None
+        if nax:
             fig = plt.figure()
-            ax = fig.add_subplot(1, 1, 1)
+            ax = fig.add_subplot(2, 1, 1)
             ax.set_title(taxon+' ('+level+'): genera-level affinities')
         ax.plot(mesh, x)
+        if nax:
+            ax = fig.add_subplot(2, 1, 2)
+            ax.set_title('By genus')
+            hs = hdis([p[1] for p in ps])
+            hs = [(hs[i][1], ps[i][0], hs[i]) for i in range(len(ps)) if 
+                   hs[i][2]-hs[i][0] < thresh]
+            hs.sort()
+            x = list(range(len(hs)))
+            ax.errorbar(x,
+                        [x[0] for x in hs],
+                        np.array([[x[2][1]-x[2][0] for x in hs],
+                                  [x[2][2]-x[2][1] for x in hs]]),
+                        fmt='.')
+            plt.xticks(x, [h[1] for h in hs], rotation='vertical')
+            fig.tight_layout()
     def plotGeneraFor(self, taxa):
         fig = plt.figure()
         ax = fig.add_subplot(1, 1, 1)
