@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pbdbDb import DB
 import random
+from sklearn.linear_model import LinearRegression
 import sympy
 
 def plotFamilies(db, comps=[0,1,2], top=5):
@@ -448,6 +449,22 @@ def plotAffinityByRange(title, times, dists, sp2loc, start=541, end=0, hf=None, 
                     marker='.', zorder=100)
     fig.colorbar(im)
 
+def bayesLR(data):
+    xs, ys, ws = [], [], []
+    for x, (mesh, p) in data:
+        for i in range(len(mesh)):
+            y, v = mesh[i], p[i]
+            xs.append(x)
+            ys.append(y)
+            ws.append(v)
+    xs = np.transpose(np.array([xs]))
+    ys = np.transpose(np.array([ys]))
+    ws = np.array(ws)
+    lr = LinearRegression()
+    lr.fit(xs, ys, ws)
+    print(lr.score(xs, ys, ws))
+    return lr.coef_[0][0], lr.intercept_[0]
+
 def readData(file='../../Paleo/Simpson/Corals/pbdb_animalia_marine_090217.csv'):
     return DB(db=file).data
 
@@ -585,9 +602,49 @@ class EnvAffinity:
         ax = fig.add_subplot(1, 1, 1)
         for level, taxon in taxa:
             self.plotGenera(taxon, level, ax)
-    def plots(self, idx, **kwargs):
-        self.plotByTime(idx, **kwargs)
-        self.plotByRange(idx, **kwargs)
+    def plotChangeVsChange(self, idxs, thresh=0.7, r=None, c=None, **kwargs):
+        if type(idxs) != list: idxs = [idxs]
+        if r is None: 
+            r = 1
+            c = len(idxs)
+        fig = plt.figure()
+        for j, idx in enumerate(idxs):
+            gp = self.group(idx)
+            sp = self.g2s[gp]
+            times, dists, floc = self.trim(splitDists(self.dists, sp))
+            def h(d): return sum(d[:2])/sum(d)
+            x, y, data = [], [], []
+            for i in range(len(dists)-1):
+                d0, d1 = lenDist(dists[i]), lenDist(dists[i+1])
+                if self.macro:
+                    dp = pAffinityDiff(d0, d1, False)
+                    dh = h(d0) - h(d1)
+                else:
+                    h0, h1 = floc[i], floc[i+1]
+                    p0, p1 = [pAffinityPct(d[0], d[2], h, False) for 
+                                           d, h in ((d0, h0), (d1, h1))]
+                    dp = pAffinityDiff(None, None, False, p0, p1)
+                    dh = h0 - h1
+                hdi = hdis([dp])[0]
+                if hdi[2]-hdi[0] > thresh: continue
+                data.append((dh, dp))
+                x.append(dh)
+                y.append(hdi)
+            ax = fig.add_subplot(r, c, j+1)
+            ax.set_title(gp)
+            ax.set_xlabel('Change in h')
+            ax.set_ylabel('Change in a')
+            ax.axhline(0, color='black', linestyle=':')
+            ax.axvline(0, color='black', linestyle=':')
+            ax.errorbar(x,
+                        [x[1] for x in y],
+                        np.array([[x[1]-x[0] for x in y],
+                                  [x[2]-x[1] for x in y]]),
+                        fmt='.')
+            m, b = bayesLR(data)
+            x0, x1 = min(x), max(x)
+            ax.plot([x0, x1], [m*x0+b, m*x1+b], color='red')
+        fig.tight_layout()
 
 def affinityAnalysis(data, timeLevel=5, doColor=False, **kwargs):
     timesEnv, distsEnv, sp2locEnv, locEnv = fossilDistributions(

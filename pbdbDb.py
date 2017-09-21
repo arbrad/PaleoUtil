@@ -411,6 +411,6 @@ def speciesOverTime(db, degrees=None, modifier='', byBin=False, cutoffThresh=.05
                 weights = intervals
             lr.fit(np.array([[v] for v in x]), np.array(y), weights)
             a, b = lr.coef_, lr.intercept_
-            ax.plot([x[0],x[-1]], [b,b+a*x[-1]])
+            ax.plot([x[0],x[-1]], [b+a*x[0],b+a*x[-1]])
         ax.set_title(str(loc))
         

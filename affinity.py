@@ -200,8 +200,10 @@ def pAffinityDiff(dist1, dist0, plot=True, p1=None, p0=None, **kwargs):
     for i, a0 in enumerate(mesh):
         for j, a1 in enumerate(mesh):
             d = a1-a0
-            x[int((d+1)*opts.grid+0.5)] += p0[i]*p1[j]/opts.grid
+            x[int((d+1)*opts.grid+0.5)] += p0[i]*p1[j]
     ls = np.linspace(-1+1/opts.grid,1-1/opts.grid,2*opts.grid-1)
+    s = sum(x)
+    x = [e/s*len(ls) for e in x]
     if plot:
         p = plt.plot(ls, x)
         l, _, r = hdi(x)
