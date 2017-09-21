@@ -61,19 +61,25 @@ class DB:
             sp = self.name(r)
             if sp not in self.range: self.range[sp] = (0, math.inf)
             ce,cl = self.range[sp]
-            e,l = float(r['max_ma']), float(r['min_ma'])
-            self.range[sp] = (max(ce,e), min(cl,l))
+            try:
+                e,l = float(r['max_ma']), float(r['min_ma'])
+                self.range[sp] = (max(ce,e), min(cl,l))
+            except:
+                pass
         # time bins by species
         self.bins = {}
         for sp, (e,l) in self.range.items():
+            if e < l: continue
             eb = bisect.bisect_left(self.timeSplits, e)
             lb = bisect.bisect_right(self.timeSplits, l)
+            if lb-1 == eb: lb = eb
             assert lb <= eb
             assert lb == 0 or self.timeSplits[lb-1] <= l
             assert eb == len(self.timeSplits) or self.timeSplits[eb] >= e
             self.bins[sp] = (lb, eb)
         # remove singletons: species that appear in only one bin
         for sp, _ in self.range.items():
+            if sp not in self.bins: continue
             l, e = self.bins[sp]
             if l == e: del self.bins[sp]
     

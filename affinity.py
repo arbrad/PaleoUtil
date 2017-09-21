@@ -165,16 +165,22 @@ def _plotAffinity(mesh, x):
     plt.axvline(mesh[l], color=p[-1].get_color(), linestyle=':')
     plt.axvline(mesh[r], color=p[-1].get_color(), linestyle=':')
 
-def pAffinityPct(a, b, h, plot=True, **kwargs):
+def pAffinityPct(a, b, h, plot=True, priorA=None, priorH=None, **kwargs):
     opts = options(**kwargs)
-    def g(a):
+    def g(a, h):
         z = (1-a)/a
         p = h/(h+z*(1-h))
-        return binom.pmf(k, n, p)
+        rv = binom.pmf(k, n, p)
+        if priorA:
+            rv = rv * priorA(a)
+        return rv
     n = a+b
     k = a
     mesh = np.linspace(1/opts.grid,1-1/opts.grid,opts.grid-1)
-    x = [g(a) for a in mesh]
+    if priorH:
+        x = [sum(g(a, h)*priorH(h) for h in mesh) for a in mesh]
+    else:
+        x = [g(a, h) for a in mesh]
     s = sum(x)
     x = [e/s*opts.grid for e in x]
     if plot: 
@@ -273,3 +279,30 @@ def simulateAffinity(N, start=[10,40,15,10], delta=10, **kwargs):
         for i in range(len(na)):
             print('%2d % .2f % .2f | %s'%(i, na[i], nca[i],
                                          ' '.join('%3d'%x for x in dists[i])))
+
+def testAffinity(a, h, N, runs, f=None, **kwargs):
+    nok = 0
+    for _ in range(runs):
+        p = a*h / (a*h + (1-a)*(1-h))
+        if not f:
+            nt = binom.rvs(N, p)
+            no = N-nt
+            pa = pAffinityPct(nt, no, h, False, **kwargs)
+        else:
+            H0 = binom.rvs(N, h)
+            H1 = N-H0
+            z = (1-a)/a
+            f0 = f/(h + z*(1-h))
+            f1 = z*f0
+            t0 = binom.rvs(H0, f0)
+            t1 = binom.rvs(H1, f1)
+            pa = pAffinity([t0, H0-t0, t1, H1-t1], False, **kwargs)
+        hdi = hdis([pa], **kwargs)[0]            
+        ok = hdi[0] <= a and a <= hdi[2]
+        if runs <= 100:
+            if not f:
+                print('%2d %2d %.2f %.2f %.2f %s'%(nt, no, hdi[0], hdi[1], hdi[2], '*' if ok else ''))
+            else:
+                print('%2d %2d %2d %2d %.2f %.2f %.2f %s'%(t0, H0-t0, t1, H1-t1, hdi[0], hdi[1], hdi[2], '*' if ok else ''))
+        nok += ok
+    print(nok, runs)
