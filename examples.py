@@ -32,7 +32,7 @@ def run():
     
     # 2. Generate lithology genus-level affinities for various taxa.
     print('Creating EnvAffinity: lithology* occurrence')
-    gen = EnvAffinity(data, 'lithology*', carbonate, clastic, correct=True, macro=False)
+    gen = EnvAffinity(data, 'lithology*', carbonate, clastic, correct=True, macro=False, timeLevel=1)
     print('Plotting genera-level affinities for Gastropoda (blue), Bivalvia (orange), Bryozoa (green), Scleractinia (red)')
     gen.plotGeneraFor([('class', 'Gastropoda'), ('class', 'Bivalvia'), ('phylum', 'Bryozoa'), ('order', 'Scleractinia')])
     

@@ -399,6 +399,8 @@ def plotAffinity(title, times, dists, sp2loc, color=None, ax=None, hf=None, xx=N
         f(deo, sdDiff, [d0, d1], dext, dorig)
     if ax:
         plotHdis(ax, title+' (affinity)', dall, False, color=color)
+    elif not ddel:
+        plotHdis(fig.add_subplot(1, 1, 1), title+' (affinity)', dall, False, color=color)        
     else:
         plotHdis(fig.add_subplot(3, 2, 1), title+' (affinity)', dall, False, color=color)
         cc = color[:-1] if color else None
@@ -522,23 +524,34 @@ class EnvAffinity:
         times, dists, floc = self.trim(splitDists(self.dists, sp))
         h = None if self.macro else [0.5 for _ in times]
         plotAffinityByRange(gp+': '+self.field, times, dists, self.sp2loc, hf=h, **kwargs)
-    def plotGenera(self, taxon, level='family', ax=None):
-        assert not self.macro
+    def plotGenera(self, taxon, level='family', ax=None, **kwargs):
         g2s = speciesInClades(self.data, self.trackLevel, 'genus', restrictLevel=level, restrict=taxon)
-        s2g = {}
-        for g, sps in g2s.items():
-            for sp in sps:
-                s2g[sp] = g
         g2c = {g:[0,0] for g in g2s}
-        for d in self.dists:
-            for sp, g in s2g.items():
-                for i in range(2):
-                    if sp in d[i]:
-                        g2c[g][i] += d[i][sp]
+        if self.macro:
+            for d in self.dists:
+                for g, sp in g2s.items():
+                    for i in range(2):
+                        g2c[g][i] += len(sp & d[i])
+        else:
+            s2g = {}
+            for g, sps in g2s.items():
+                for sp in sps:
+                    s2g[sp] = g
+            for d in self.dists:
+                for sp, g in s2g.items():
+                    for i in range(2):
+                        if sp in d[i]:
+                            g2c[g][i] += d[i][sp]
         ps = []
+        if self.macro:
+            h0, h1 = [sum(len(d[i]) for d in self.dists) for i in range(2)]
         for g, (t0, t1) in g2c.items():
             if not (t0 or t1): continue
-            ps.append(pAffinityPct(t0, t1, 0.5, False))
+            if self.macro:
+                p = pAffinity([t0, h0-t0, t1, h1-t1], False, **kwargs)
+            else:
+                p = pAffinityPct(t0, t1, 0.5, False, **kwargs)
+            ps.append(p)
         if not ps: return
         mesh = ps[0][0]
         x = np.zeros((len(mesh),))
