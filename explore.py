@@ -474,12 +474,13 @@ class EnvAffinity:
                  timeLevel=5, timef=lambda x: x,
                  start=541, end=0,
                  dropSingle=False, correct=False,
-                 macro=True,
+                 macro=True, occAsMacro=True,
                  latDegrees=5, lngDegrees=5):
         self.data = data
         self.field = field
         self.trackLevel = trackLevel
         self.macro = macro
+        self.occAsMacro = occAsMacro
         loc = lambda r: location(r, latDegrees, lngDegrees)
         self.times, self.dists, self.sp2loc, self.floc = fossilDistributions(
                 data, field, h1desc, h2desc, trackLevel, trackRank, timeLevel, 
@@ -533,13 +534,13 @@ class EnvAffinity:
         gp = self.group(idx)
         sp = self.g2s[gp]
         times, dists, floc = self.trim(splitDists(self.dists, sp), start, end)
-        h = None if self.macro else [0.5 for _ in times]
+        h = None if self.macro or self.occAsMacro else floc
         plotAffinity(gp+': '+self.field, times, dists, self.sp2loc, floc if color else None, ax, hf=h, **kwargs)
     def plotByRange(self, idx, **kwargs):
         gp = self.group(idx)
         sp = self.g2s[gp]
         times, dists, floc = self.trim(splitDists(self.dists, sp))
-        h = None if self.macro else [0.5 for _ in times]
+        h = None if self.macro or self.occAsMacro else floc
         plotAffinityByRange(gp+': '+self.field, times, dists, self.sp2loc, hf=h, **kwargs)
     def plotGenera(self, taxon, level='family', ax=None, thresh=0.5, **kwargs):
         g2s = speciesInClades(self.data, self.trackLevel, 'genus', restrictLevel=level, restrict=taxon)
@@ -616,15 +617,11 @@ class EnvAffinity:
             x, y, data = [], [], []
             for i in range(len(dists)-1):
                 d0, d1 = lenDist(dists[i]), lenDist(dists[i+1])
-                if self.macro:
-                    dp = pAffinityDiff(d0, d1, False)
-                    dh = h(d0) - h(d1)
-                else:
-                    h0, h1 = floc[i], floc[i+1]
-                    p0, p1 = [pAffinityPct(d[0], d[2], h, False) for 
-                                           d, h in ((d0, h0), (d1, h1))]
-                    dp = pAffinityDiff(None, None, False, p0, p1)
-                    dh = h0 - h1
+                h0, h1 = floc[i], floc[i+1]
+                p0, p1 = [pAffinityPct(d[0], d[2], h, False) for 
+                                       d, h in ((d0, h0), (d1, h1))]
+                dp = pAffinityDiff(None, None, False, p0, p1)
+                dh = h0 - h1
                 hdi = hdis([dp])[0]
                 if hdi[2]-hdi[0] > thresh: continue
                 data.append((dh, dp))
