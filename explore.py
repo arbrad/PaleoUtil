@@ -505,6 +505,8 @@ class EnvAffinity:
         if self.useColl:
             if type(useColl) == str:
                 data = readCollections(useColl)
+            else:
+                data = useColl
             splits = getSplits(timeLevel)
             hc = [[0,0] for _ in range(len(splits))]
             fields = getFields(field)
