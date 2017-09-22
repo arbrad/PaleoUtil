@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pbdbDb import DB
 import random
+import re
 from sklearn.linear_model import LinearRegression
 import sympy
 
@@ -105,7 +106,7 @@ def timeAnalysis(db, start=300):
     db.plotMeanPCAOverTime([0,1], species=scler, start=start)
 
 def location(r, latm=10, lngm=10):
-    lat, lng = 'paleolat', 'paleolng'
+    lat, lng = 'lat', 'lng'
     if lat not in r or lng not in r:
         return
     def f(s, degrees): return math.floor(float(r[s])//degrees+0.5)
@@ -125,6 +126,9 @@ def getFields(field):
         return [field[:-1]+'1', field[:-1]+'2']
     else:
         return [field]    
+def interField(vals, h):
+    vals = set(x.strip().strip('"') for x in vals.split(','))
+    return bool(vals & h)
 
 def fossilDistributions(data, field, h1_, h2_, 
                         trackLevel, trackRank,
@@ -136,9 +140,7 @@ def fossilDistributions(data, field, h1_, h2_,
     fields = getFields(field)
     # Intersection of values with category.
     h1desc, h2desc = set(h1_), set(h2_)
-    def inter(vals, h):
-        vals = set(x.strip().strip('"') for x in vals.split(','))
-        return bool(vals & h)
+    def inter(vals, h): return interField(vals, h)
     # Categories and labels
     h1, h2 = ([{} for _ in range(len(splits))] for _ in range(2))
     h1lbl, h2lbl = ([set() for _ in range(len(splits))] for _ in range(2))
@@ -421,7 +423,10 @@ def plotAffinityByRange(title, times, dists, sp2loc, start=541, end=0, hf=None, 
     r2h = {}
     for i, d in enumerate(dists):
         if times[i] > start or times[i] < end: continue
-        r = nlocs(d[0]|d[2])
+        if type(d[0]) == set:
+            r = nlocs(d[0]|d[2])
+        else:
+            r = nlocs(set(d[0].keys()) | set(d[2].keys()))
         ld = lenDist(d)
         if hf:
             p = pAffinityPct(ld[0], ld[2], hf[i], False, **kwargs)
@@ -466,7 +471,17 @@ def bayesLR(data):
     return lr.coef_[0][0], lr.intercept_[0]
 
 def readData(file='../../Paleo/Simpson/Corals/pbdb_animalia_marine_090217.csv'):
-    return DB(db=file).data
+    data = []
+    excludeFields = re.compile('descript|comments|basis')
+    with open(file, encoding='utf-8') as f:
+        for r in csv.DictReader(f):
+            if r['accepted_name'] != '':
+                rr = {f:v for f,v in r.items() if not excludeFields.search(f)}
+                data.append(rr)
+    return data
+def readCollections(file='../../Paleo/Simpson/Corals/pbdb_collections_animalia_marine_092217.csv'):
+    with open(file, encoding='utf-8') as f:
+        return list(csv.DictReader(f))
 
 class EnvAffinity:
     def __init__(self, data, field, h1desc, h2desc,
@@ -475,7 +490,8 @@ class EnvAffinity:
                  start=541, end=0,
                  dropSingle=False, correct=False,
                  macro=True, occAsMacro=True,
-                 latDegrees=5, lngDegrees=5):
+                 latDegrees=5, lngDegrees=5,
+                 useColl=None):
         self.data = data
         self.field = field
         self.trackLevel = trackLevel
@@ -485,6 +501,39 @@ class EnvAffinity:
         self.times, self.dists, self.sp2loc, self.floc = fossilDistributions(
                 data, field, h1desc, h2desc, trackLevel, trackRank, timeLevel, 
                 timef, start, end, loc, dropSingle, correct, macro)
+        self.useColl = useColl is not None
+        if self.useColl:
+            if type(useColl) == str:
+                data = readCollections(useColl)
+            splits = getSplits(timeLevel)
+            hc = [[0,0] for _ in range(len(splits))]
+            fields = getFields(field)
+            h1, h2 = set(h1desc), set(h2desc)
+            for r in data:
+                isH1, isH2 = False, False
+                for f in fields:
+                    vals = r[f]
+                    isH1 = isH1 or interField(vals, h1)
+                    isH2 = isH2 or interField(vals, h2)
+                try:
+                    e, l = float(r['max_ma']), float(r['min_ma'])
+                except:
+                    continue
+                eb = bisect.bisect_left(splits, e)
+                lb = bisect.bisect_right(splits, l)
+                if lb > eb: lb = eb
+                for i in range(lb, min(eb+1, len(hc))):
+                    if isH1: hc[i][0] += 1
+                    if isH2: hc[i][1] += 1
+            while splits[0] < self.times[0]:
+                splits.pop(0)
+                hc.pop(0)
+            hc = hc[:len(self.times)]
+            freq = []
+            for x, y in hc:
+                assert x+y > 0
+                freq.append(x/(x+y))
+            self.coll = freq            
     def focusOn(self, groupLevel='phylum', threshold=9, **kwargs):
         self.g2s = speciesInClades(self.data, self.trackLevel, groupLevel, **kwargs)
         gs = []
@@ -518,7 +567,7 @@ class EnvAffinity:
         assert gp in self.g2s
         return gp
     def trim(self, dists, start=541, end=0):
-        times, floc = self.times[:], self.floc[:]
+        times, floc = self.times[:], (self.coll[:] if self.useColl else self.floc[:])
         while ((start is not None and times[-1] > start) or 
                 (not dists[-1][0] and not dists[-1][2])):
             times.pop()
