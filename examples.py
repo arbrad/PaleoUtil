@@ -8,6 +8,7 @@ Examples of how to use the mess o' code.
 """
 
 from explore import *
+import scipy.stats
 
 def run():
     print('Reading data')
@@ -65,6 +66,17 @@ def generateFigures(data=None, fdir='../../Paleo/Affinity/', **kwargs):
     for a, b in [(1,4), (10,40)]:
         pAffinityPct(a, b, 0.3, **kwargs)
     plt.savefig(fdir+'scenario4.png', **saveOpts)
+    plt.figure()
+    grid = int(kwargs['grid']) if 'grid' in kwargs else 100
+    mesh = np.linspace(1/grid, 1-1/grid, grid-1)
+    priorA = lambda x: scipy.stats.beta.pdf(x, 4, 4)
+    priorH = lambda x: scipy.stats.beta.pdf(x, 12, 12)
+    plt.plot(mesh, [priorH(x) for x in mesh])
+    plt.plot(mesh, [priorA(x) for x in mesh])
+    pAffinityPct(3, 5, 0.5, True, **kwargs)
+    pAffinityPct(3, 5, 0.5, True, priorA=priorA, priorH=priorH, **kwargs)
+    pAffinityPct(3, 5, 0.5, True, priorH=priorH, **kwargs)
+    plt.savefig(fdir+'prior.png', **saveOpts)
     plt.figure()
     pAffinityPct(1, 4, 0.7)
     for c, d in [(13,2), (27,8), (55,20)]:
