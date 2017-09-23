@@ -48,3 +48,38 @@ def run():
     gen.plotGeneraFor([('class', 'Gastropoda'), ('class', 'Bivalvia'), ('phylum', 'Bryozoa'), ('order', 'Scleractinia')])
     
     # Other combos: shallow/deep, reef/nonreef
+
+def generateFigures(data=None, fdir='../../Paleo/Affinity/', **kwargs):
+    saveOpts = {'bbox_inches':'tight', 'dpi':600}
+    plt.figure()
+    for a, b in [(1,1), (1,2), (0,2), (9,12), (9,24)]:
+        pAffinityPct(a, b, 0.5, **kwargs)
+    plt.savefig(fdir+'scenario1.png', **saveOpts)
+    plt.figure()
+    p0 = pAffinityPct(10, 7, 0.5, True, **kwargs)
+    p1 = pAffinityPct(5, 17, 0.5, True, **kwargs)
+    pAffinityDiff(None, None, True, p1, p0, **kwargs)
+    plt.xlabel('(Change in) Affinity')
+    plt.savefig(fdir+'scenario2.png', **saveOpts)
+    plt.figure()
+    for a, b in [(1,4), (10,40)]:
+        pAffinityPct(a, b, 0.3, **kwargs)
+    plt.savefig(fdir+'scenario4.png', **saveOpts)
+    plt.figure()
+    pAffinityPct(1, 4, 0.7)
+    for c, d in [(13,2), (27,8), (55,20)]:
+        pAffinity([1, c, 4, d], margin=True)
+    plt.xlim([0, 0.5])
+    plt.savefig(fdir+'scenario5.png', **saveOpts)
+    if data:
+        generateGeneraPlots(data, fdir, saveOpts)
+
+def generateGeneraPlots(data, fdir, saveOpts):
+    lit = EnvAffinity(data, 'lithology*', carbonate, clastic, macro=False, timeLevel=1)
+    lit.plotGeneraFor([('class', 'Bivalvia'), ('phylum', 'Bryozoa'), ('order', 'Scleractinia')], 
+                      multiPlot=True,
+                      figsize=(4,8))
+    plt.savefig(fdir+'scenario3.png', **saveOpts)
+    lit.plotGeneraFor([('genus', 'Abra (Abra)'), ('genus', 'Daonella'), ('genus', 'Actinostreon'), ('genus', 'Toucasia')],
+                      grid=1000)
+    plt.savefig(fdir+'scenario3_ex.png', **saveOpts)

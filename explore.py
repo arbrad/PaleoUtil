@@ -593,7 +593,7 @@ class EnvAffinity:
         times, dists, floc = self.trim(splitDists(self.dists, sp))
         h = None if self.macro or self.occAsMacro else floc
         plotAffinityByRange(gp+': '+self.field, times, dists, self.sp2loc, hf=h, **kwargs)
-    def plotGenera(self, taxon, level='family', ax=None, thresh=0.5, **kwargs):
+    def plotGenera(self, taxon, level='family', ax1=None, ax2=None, thresh=0.5, ret=False, **kwargs):
         g2s = speciesInClades(self.data, self.trackLevel, 'genus', restrictLevel=level, restrict=taxon)
         g2c = {g:[0,0] for g in g2s}
         if self.macro:
@@ -628,32 +628,50 @@ class EnvAffinity:
             x += np.array(p)
         s = sum(x)/(len(mesh)+1)
         x = [e/s for e in x]
-        nax = ax is None
+        nax = ax1 is None
         if nax:
             fig = plt.figure()
-            ax = fig.add_subplot(2, 1, 1)
-            ax.set_title(taxon+' ('+level+'): genera-level affinities')
-        ax.plot(mesh, x)
-        if nax:
-            ax = fig.add_subplot(2, 1, 2)
-            ax.set_title('By genus')
+            ax1 = fig.add_subplot(2, 1, 1)
+            ax1.set_title(taxon+' ('+level+'): genera-level affinities')
+            plt.yticks([])
+        p = ax1.plot(mesh, x)
+        if nax or ax2 is not None:
+            compact = ax2 is not None
+            if ax2 is None:
+                ax2 = fig.add_subplot(2, 1, 2)
             hs = hdis([p[1] for p in ps])
             hs = [(hs[i][1], ps[i][0], hs[i]) for i in range(len(ps)) if 
                    hs[i][2]-hs[i][0] < thresh]
             hs.sort()
             x = list(range(len(hs)))
-            ax.errorbar(x,
-                        [x[0] for x in hs],
-                        np.array([[x[2][1]-x[2][0] for x in hs],
-                                  [x[2][2]-x[2][1] for x in hs]]),
-                        fmt='.')
-            plt.xticks(x, [h[1] for h in hs], rotation='vertical')
+            ax2.errorbar(x,
+                         [x[0] for x in hs],
+                         np.array([[x[2][1]-x[2][0] for x in hs],
+                                   [x[2][2]-x[2][1] for x in hs]]),
+                         fmt='k.', ecolor=p[-1].get_color())
+            if not compact:
+                plt.xticks(x, [h[1] for h in hs], rotation='vertical')
+            else:
+                plt.xticks([])
+            if ret: return hs
+    def plotGeneraFor(self, taxa, multiPlot=False, grid=100, **kwargs):
+        fig = plt.figure(**kwargs)
+        if not multiPlot:
+            ax = fig.add_subplot(1, 1, 1)
+            plt.yticks([])
+            plt.xlabel('Affinity')
+            for level, taxon in taxa:
+                self.plotGenera(taxon, level, ax, grid=grid, **kwargs)
+        else:
+            n = 1+len(taxa)
+            ax1 = fig.add_subplot(n, 1, 1)
+            ax1.set_title('Genera-level Affinities')
+            plt.yticks([])
+            for i, (level, taxon) in enumerate(taxa):
+                ax2 = fig.add_subplot(n, 1, i+2)
+                ax2.set_title(taxon)
+                self.plotGenera(taxon, level, ax1, ax2, grid=grid, **kwargs)
             fig.tight_layout()
-    def plotGeneraFor(self, taxa):
-        fig = plt.figure()
-        ax = fig.add_subplot(1, 1, 1)
-        for level, taxon in taxa:
-            self.plotGenera(taxon, level, ax)
     def plotChangeVsChange(self, idxs, thresh=0.7, r=None, c=None, **kwargs):
         if type(idxs) != list: idxs = [idxs]
         if r is None: 

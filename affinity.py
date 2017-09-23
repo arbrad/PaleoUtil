@@ -164,6 +164,8 @@ def _plotAffinity(mesh, x):
     l, _, r = hdi(x)
     plt.axvline(mesh[l], color=p[-1].get_color(), linestyle=':')
     plt.axvline(mesh[r], color=p[-1].get_color(), linestyle=':')
+    plt.xlabel('Affinity')
+    plt.yticks([])
 
 def pAffinityPct(a, b, h, plot=True, priorA=None, priorH=None, **kwargs):
     opts = options(**kwargs)
@@ -203,7 +205,7 @@ def pAffinityDiff(dist1, dist0, plot=True, p1=None, p0=None, **kwargs):
             x[int((d+1)*opts.grid+0.5)] += p0[i]*p1[j]
     ls = np.linspace(-1+1/opts.grid,1-1/opts.grid,2*opts.grid-1)
     s = sum(x)
-    x = [e/s*len(ls) for e in x]
+    x = [e/s*opts.grid for e in x]
     if plot:
         p = plt.plot(ls, x)
         l, _, r = hdi(x)
