@@ -95,3 +95,24 @@ def generateGeneraPlots(data, fdir, saveOpts):
     lit.plotGeneraFor([('genus', 'Abra (Abra)'), ('genus', 'Daonella'), ('genus', 'Actinostreon'), ('genus', 'Toucasia')],
                       grid=1000)
     plt.savefig(fdir+'scenario3_ex.png', **saveOpts)
+    
+def bivalveCCSD(data, macro=True, **kwargs):
+    env, lith = getFields('environment'), fields('lithology*')
+    shs, des, cas, cls = set(shallow), set(deep), set(carbonate), set(clastic)
+    shad, deed, card, clad = [], [], [], []
+    for r in data:
+        e, l = ','.join(r[f] for f in env), ','.join(r[f] for f in lith)
+        if interField(e, shs): shad.append(r)
+        if interField(e, des): deed.append(r)
+        if interField(l, cas): card.append(r)
+        if interField(l, cls): clad.append(r)
+#    sha, dee = [EnvAffinity(x, 'lithology*', carbonate, clastic, macro=macro) for x in (shad, deed)]
+#    sha.focusOn('class')
+#    dee.focusOn('class')
+#    fig = plt.figure()
+#    sha.plotByTime('Bivalvia', ax=fig.add_subplot(2,1,1), end=252, **kwargs)
+#    dee.plotByTime('Bivalvia', ax=fig.add_subplot(2,1,2), end=252, **kwargs)
+    sha, dee = [EnvAffinity(x, 'lithology*', carbonate, clastic, macro=False, timeLevel=1, start=541, end=271) for x in (shad, deed)]
+    car, cla = [EnvAffinity(x, 'environment', shallow, deep, macro=False, timeLevel=1, start=541, end=271) for x in (card, clad)]
+    for x in (sha, dee, car, cla): 
+        x.plotGenera('Bivalvia', 'class')

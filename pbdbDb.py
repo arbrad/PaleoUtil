@@ -262,8 +262,8 @@ class DB:
                     if not e0 or not e1: continue
                     v = evecs[:, 0 if e0 > e1 else 1]
                     # Chi-squared, 2 df, 95% conf
-                    w = 2*(5.991*e0)**0.5
-                    h = 2*(5.991*e1)**0.5
+                    w = (5.991*e0)**0.5
+                    h = (5.991*e1)**0.5
                     alpha = 180/math.pi*math.atan2(v[1],v[0])
                     el = mplt.patches.Ellipse((a[i],b[i]), w, h, alpha, 
                                               fill=False, ec=im.to_rgba(c[i]))
@@ -359,7 +359,7 @@ def speciesOverTime(db, degrees=None, modifier='', byBin=False, cutoffThresh=.05
         del dbs['No location']
     keys = set(dbs.keys())
     if degrees:
-        loci = list(range(math.ceil(-179/degrees), math.ceil(180/degrees)+1))
+        loci = list(range(math.ceil(-179//degrees), math.ceil(180//degrees)+1))
         for x in loci:
             for y in loci:
                 k = (x, y)

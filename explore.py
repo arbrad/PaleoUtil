@@ -68,8 +68,8 @@ shallow = ['coastal indet.','delta front','delta plain','deltaic indet.',
            'open shallow subtidal','fluvial-deltaic indet.','paralic indet.',
            'peritidal','prodelta','sand shoal','shallow subtidal indet.',
            'shoreface','transition zone/lower shoreface',
-           'intrashelf/intraplatform reef','reef','buildup or bioherm',
-           'perireef or subreef','platform/shelf-margin reef']
+           'reef','buildup or bioherm','perireef or subreef',
+           'intrashelf/intraplatform reef','platform/shelf-margin reef']
 deep = ['basinal (carbonate)','basinal (siliceous)','basinal (siliciclastic)',
         'deep-water indet.','deep subtidal indet.','deep subtidal ramp',
         'deep subtidal shelf','offshore','offshore indet.','offshore shelf',
@@ -96,8 +96,8 @@ def binaryAnalysis(db, comps, field, a, b):
     db.plot(comps, 
             lambda sp: 4*int(sp in scler)+3-int(sp in bsub)-2*int(sp in asub))
     
-def timeAnalysis(db, start=300):
-    scler = db.fieldSubset('order', 'Scleractinia')
+def timeAnalysis(db, start=300, level='order', taxon='Scleractinia'):
+    scler = db.fieldSubset(level, taxon)
     db.computePCA(['environment'])
     db.plot([0,3], db.colorByTime(start=start), species=scler)
     db.plotMeanPCAOverTime([0,3], species=scler, start=start)
@@ -686,7 +686,10 @@ class EnvAffinity:
             x, y, data = [], [], []
             for i in range(len(dists)-1):
                 d0, d1 = lenDist(dists[i]), lenDist(dists[i+1])
-                h0, h1 = floc[i], floc[i+1]
+                if self.macro or self.occAsMacro:
+                    h0, h1 = sum(d0[:2])/sum(d0), sum(d1[:2])/sum(d1)
+                else:
+                    h0, h1 = floc[i], floc[i+1]
                 p0, p1 = [pAffinityPct(d[0], d[2], h, False) for 
                                        d, h in ((d0, h0), (d1, h1))]
                 dp = pAffinityDiff(None, None, False, p0, p1)
