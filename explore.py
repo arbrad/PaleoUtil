@@ -87,6 +87,13 @@ nonreef = ['coastal indet.','delta front','delta plain','deltaic indet.',
            'deep-water indet.','deep subtidal indet.','deep subtidal ramp',
            'deep subtidal shelf','offshore','offshore indet.','offshore shelf',
            'slope','submarine fan','offshore ramp']
+feeder = ['frugivore', 'omnivore', 'piscivore', 'browser', 'photoautotroph', 
+          'granivore', 'carnivore', 'deposit feeder', 'coprophage', 'herbivore',
+          'grazer', 'osmotroph', 'detritivore', 'suspension feeder',
+          'chemosymbiotic', 'photosymbiotic', 'insectivore', 'parasite', 
+          'folivore', 'durophage', 'microcarnivore']
+carnivore = ['carnivore', 'durophage', 'insectivore', 'piscivore']
+otherfeeder = list(set(feeder)-set(carnivore))
 
 def binaryAnalysis(db, comps, field, a, b):
     scler = db.fieldSubset('order', 'Scleractinia')
