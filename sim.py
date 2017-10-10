@@ -9,6 +9,7 @@ import matplotlib as mplt
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+import scipy.stats
 from scipy.interpolate import Rbf
 
 class Params:
@@ -24,10 +25,12 @@ class Params:
         self.CrossExtrema = 10
         # amount of change between zone-specific impact functions
         self.CrossJitter = 0.5
+        # width of Gaussian in impact functions
+        self.StdDev = 1
         # density-impact % on landscape
-        self.Density = .99
+        self.Density = -1
         # 1/Head = chance of individual accepting bad move is 1/Bad
-        self.Bad = 2
+        self.Bad = 5
         # whether to reproduce
         self.Reproduce = True
 
@@ -39,6 +42,24 @@ def grid(params):
     X, Y, Res = params.X, params.Y, params.Res
     return np.meshgrid(np.arange(0, X+Res, Res),
                        np.arange(0, Y+Res, Res))
+
+class Sog:
+    '''Sum of Gaussians'''
+    def __init__(self, params, x, y, z):
+        cov = [[params.StdDev**2, 0], [0, params.StdDev**2]]
+        xi, yi = grid(params)
+        co = np.zeros((*xi.shape,2))
+        for m in range(xi.shape[0]):
+            for n in range(xi.shape[1]):
+                co[m,n,0] = xi[m,n]
+                co[m,n,1] = yi[m,n]
+        self.f = np.zeros(xi.shape)
+        for i in range(len(x)):
+            d = scipy.stats.multivariate_normal([x[i], y[i]], cov)
+            self.f += z[i]*d.pdf(co)
+        self.f /= len(x)
+    def __call__(self, xi, yi):
+        return self.f
 
 def cross(params, verb=False):
     X, Y = params.X, params.Y
@@ -57,7 +78,11 @@ def cross(params, verb=False):
                 bound(x, 1, X-1)
                 bound(y, 1, Y-1)
                 bound(z, -1, 1)
-            rbv = Rbf(x, y, z, function='gaussian')
+            if params.Density != 0:
+                x[-1] = i + 0.5
+                y[-1] = j + 0.5
+                z[-1] = params.Density
+            rbv = Sog(params, x, y, z) #Rbf(x, y, z, function='gaussian')
             rv[i][j] = rbv(xi, yi)
             if verb:
                 zi = rv[i][j]
@@ -96,9 +121,9 @@ class Sim:
             X, Y = int(x), int(y)
             self.scape += zs[i]/factor/len(self.search)*self.cross[X][Y]
         self.scape -= self.scape.min()
+        #for x, y in self.search:
+        #    self.scape[self.minor(x, y)] *= self.params.Density
         self.scape /= sum(sum(abs(self.scape)))
-        for x, y in self.search:
-            self.scape[self.minor(x, y)] *= self.params.Density
     def incrOpts(self):
         mean, cov = [0, 0], [[self.params.Res**2, 0], [0, self.params.Res**2]]
         for i in range(len(self.search)):
@@ -130,7 +155,7 @@ class Sim:
         plt.xlim(0, self.params.X)
         plt.ylim(0, self.params.Y)
         x, y = [x for x, _ in self.search], [y for _, y in self.search]
-        plt.scatter(x, y, c='black')
+        plt.scatter(x, y, c='black', marker='.')
     def run(self, N, scape=1, plot=1, animate=True):
         if not animate:
             n = math.ceil((N/plot)**.5)
