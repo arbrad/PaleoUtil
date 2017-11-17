@@ -280,57 +280,70 @@ def xplot(fn):
     plt.pcolor(xi, yi, zi, cmap=mplt.cm.jet)
     plt.colorbar()
 
-def fixpointDist(N, P, asex=1, ster=1, prec=1e-12):
-    assert P < N
-    Q = N - 1 - P
+def fixpointDist(N, P, A=1, prec=1e-12):
+    assert P+A <= N
+    Q = N - A - P
     a = 1
     b = 1 if P else 0
     c = 1 if Q else 0
     n = a+b+c
     a, b, c = a/n, b/n, c/n
     while True:
-        an = 1/N * a + b
-        bn = P/N*asex * a
-        cn = Q/N*ster * a
+        an = A/N * a + b
+        bn = P/N * a
+        cn = Q/N * a
         n = an+bn+cn
         an, bn, cn = an/n, bn/n, cn/n
         if abs(an-a) < prec and abs(bn-b) < prec and abs(cn-c) < prec:
             return an, bn, cn
         else:
             a, b, c = an, bn, cn
-def solveFixpointDist(N, P):
+def solveFixpointDist(N, P, A=1):
     a, b, c = sympy.symbols('a b c')
-    Q = N-1-P
+    Q = N-A-P
     c0 = a+b+c-1
-    c1 = (1/N*a + b) - a*(a+b)
+    c1 = A/N*a + b - a*(a+b)
     c2 = P/N*a - b*(a+b)
     c3 = Q/N*a - c*(a+b)
     x = sympy.solve((c0, c1, c2, c3), a, b, c)
-    return [y for y in x if y[2] < 1 and all(z >= 0 for z in y)]
-def plotBodyDists(Nmax, oviAsex=True, asexr=1, sterr=1, data=False):
-    x, y0, y1, y2, y3, y4 = [], [], [], [], [], []
-    xmo, ymo = [], []
+    return [y for y in x if y[2] < 1 and all(z >= 0 for z in y)][0]
+def asexFreq(N, P, A=1):
+    Q = N-A-P
+    a, b, c = fixpointDist(N, P, A)
+    return (1-a/A, 1-b/P if P > 0 else None, 1-c/Q if Q > 0 else None)
+def plotBodyDists(Nmax, maxA=1, data=False, onlyAsex=False):
+    x, y0, y1, y2, y3, col = [], [], [], [], [], []
     title = ['Autozooid', 'Asexual non-auto', 'Non-asexual', 'Non-sexual']
     for N in range(2, Nmax+1):
-        for P in range(int(oviAsex), N-(1-int(oviAsex))):
-            Q = N-1-P
-            a, b, c = fixpointDist(N, P, asexr, sterr)
-            x.append(N + (-.1 if oviAsex else .1))
-            y0.append(a)     # auto
-            y1.append(b)     # asexual non-auto, producing only auto
-            y2.append(c)     # non-asexual non-auto
-            y3.append(1-(b/P if oviAsex else c/Q)) # non-ovicell
-            for auto in range(2):
-                for asex in range(P+1):
-                    for ster in range(Q+1):
-                        ovi = a*auto + b*asex/max(1,P) + c*ster/max(1,Q)
-                        if not ovi: continue
-                        xmo.append(N)
-                        ymo.append(1-ovi)
-    ys = [y0, y1, y2, y3]
+        for A in range(1, min(maxA,N)+1):
+            for P in range(N-A+1):
+                Q = N-A-P
+                a, b, c = fixpointDist(N, P, A)
+                assert abs(a+b+c-1) < 1e-6
+                for i, (d, D) in enumerate([(a,A), (b,P), (c,Q)]):
+                    if not D: continue
+                    asex = 1 - d/D
+                    var = 2*int(A>1)+int(i==0)
+                    x.append(N + (var-3/2)/10)
+                    y0.append(a)     # auto
+                    y1.append(b)     # asexual non-auto, producing only auto
+                    y2.append(c)     # non-asexual non-auto
+                    y3.append(asex)  # non-ovicell
+                    col.append('bgrc'[var])
+                    # blue: A = 1, ovi != auto
+                    # green: A = 1, ovi is auto
+                    # red: A > 1, ovi != auto
+                    # cyan: A > 1, ovi is auto
+    ys, dim = ([y3], 1) if onlyAsex else ([y0, y1, y2, y3], 2)
+    # plot in reverse order to emphasize simplest
+    xrev = x[:]
+    xrev.reverse()
+    col.reverse()
     for i, y in enumerate(ys):
-        ax = plt.subplot(2, 3, i+1)
-        ax.scatter(x, y)
+        ax = plt.subplot(dim, dim, i+1)
+        yrev = y[:]
+        yrev.reverse()
+        ax.scatter(xrev, yrev, c=col)
         plt.title(title[i])
         plt.ylim((0, 1))
         for j in range(len(y)):
@@ -341,7 +354,3 @@ def plotBodyDists(Nmax, oviAsex=True, asexr=1, sterr=1, data=False):
                    x in csv.DictReader(f, delimiter='\t') if 
                    x['Phylum'] == 'Bryozoa' and x['nrr'] != 'NA' and int(x['polymorph.types']) > 1]
         ax.scatter([x+random.normalvariate(0, 0.1) for x, _ in raw], [x for _, x in raw], c='black', marker='.')
-    ax = plt.subplot(2, 3, 5)
-    plt.title('Non-sexual (multiple sexual types possible)')
-    plt.ylim((0,1))
-    ax.scatter(xmo, ymo)
