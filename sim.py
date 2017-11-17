@@ -5,12 +5,16 @@ Created on Wed Oct  4 20:40:03 2017
 @author: Aaron
 """
 
+import csv
+import itertools
+import math
 import matplotlib as mplt
 import matplotlib.pyplot as plt
 import numpy as np
 import random
 import scipy.stats
 from scipy.interpolate import Rbf
+import sympy
 
 class Params:
     def __init__(self):
@@ -94,7 +98,7 @@ def cross(params, verb=False):
                 plt.colorbar()
     return rv
 
-class Sim:
+class RQ:
     def __init__(self, params, seed=None):
         random.seed(seed)
         self.params = params
@@ -176,6 +180,96 @@ class Sim:
                 s.plot()
                 plt.pause(0.001)
 
+class NoLineage:
+    def __init__(self, N, K, M, G, maxS):
+        self.maxS = maxS
+        self.macroRate = 0.01
+        g = N//G
+        nodes = []
+        for i in range(G):
+            nodes.append(np.arange(g*i, N if i+1 == g else g*(i+1)))
+        self.neighbors = [np.random.choice(nodes[min(i//g, len(nodes)-1)], K, replace=False) for i in range(N)]
+        for i in range(G-1):
+            self.neighbors[g*(i+1)-1][-1] = g*(i+1)
+        self.interact = np.random.normal(scale=0.05, size=(M,M))
+        for i in range(self.interact.shape[0]):
+            self.interact[i,i] = 0
+        self.ma2mi = np.random.normal(scale=0.05, size=(N,M))
+        self.mi2ma = np.random.normal(scale=0.05, size=(N,M))
+        self.dist = np.zeros((N, M))
+        for i, n in enumerate(np.random.choice(np.arange(N), M, replace=False)):
+            self.dist[n,i] = 1
+        self.size = [1 for _ in range(N)]
+        self.colors = 'bgrcmyk'
+    def incrReproduce(self):
+        N = self.dist.shape[0]
+        M = self.dist.shape[1]
+        gain = np.zeros(self.dist.shape)
+        for n in range(N):
+            dist = np.zeros(M)
+            for m in range(M):
+                rate = self.ma2mi[n,m]
+                for l in range(M):
+                    rate += self.dist[n,l] * self.interact[m,l]
+                # density is bad
+                rate -= 0.05/(1+math.exp(-10*(self.dist[n,m]-0.5)))
+                dist[m] = (1+rate) * self.dist[n,m]
+            self.dist[n,:] += dist
+            np.copyto(dist, self.dist[n,:])
+            s = sum(self.dist[n,:])
+            if s > 1: 
+                self.dist[n,:] = self.dist[n,:]/s
+                dist -= self.dist[n,:]
+                dist = dist*self.size[n]/len(self.neighbors[n])
+                for k in self.neighbors[n]:
+                    gain[k,:] += dist
+            self.size[n] *= (1+self.macroRate*self.dist[n,:].dot(self.mi2ma[n,:].transpose()))
+        self.dist += gain/len(self.neighbors[0])
+        for n in range(self.dist.shape[0]):
+            s = sum(self.dist[n,:])
+            if s > 1: self.dist[n,:] = self.dist[n,:]/s
+        if len(self.neighbors) < self.maxS:
+            for n in range(N):
+                if self.size[n] > 2:
+                    self.neighbors.append(np.copy(self.neighbors[n]))
+                    self.neighbors[n][random.randint(0,len(self.neighbors[n])-1)] = len(self.neighbors)-1
+                    self.ma2mi = np.append(self.ma2mi, [np.copy(self.ma2mi[n,:])], axis=0)
+                    self.mi2ma = np.append(self.mi2ma, [np.copy(self.mi2ma[n,:])], axis=0)
+                    self.dist = np.append(self.dist, [self.dist[n,:]/2+sum(self.dist)/(2*sum(sum(self.dist)))], axis=0)
+                    self.size[n] = 1
+                    self.size.append(1)
+                    print(n, len(self.neighbors)-1)
+    def mutate(self):
+        M = self.interact.shape[0]
+        x = self.interact
+        self.interact = np.zeros((M+1,M+1))
+        self.interact[0:M,0:M] = x
+        self.interact[M,:] = np.random.normal(scale=0.05, size=M+1)
+        self.interact[:,M] = np.random.normal(scale=0.05, size=M+1)
+        self.interact[M,M] = 0
+        x = self.dist
+        self.dist = np.zeros((x.shape[0],M+1))
+        self.dist[:,0:M] = x
+        n = random.randint(0,self.dist.shape[0]-1)
+        self.dist[n,M] = 0.1
+        self.dist[n,:] /= sum(self.dist[n,:])
+    def plot(self):
+        x = np.arange(len(self.neighbors))
+        plt.subplot(2,1,1)
+        bot = np.zeros(len(self.neighbors))
+        for k in range(self.dist.shape[1]):
+            h = self.dist[:,k].transpose()
+            plt.bar(x, h, bottom=bot, color=self.colors[k%len(self.colors)])
+            bot += h
+        plt.subplot(2,1,2)
+        plt.bar(x, self.size, color='blue')
+    def run(self, N, plot=1):
+        for n in range(N):
+            self.incrReproduce()
+            if n%plot == 0: 
+                self.plot()
+                plt.pause(0.001)
+
 def xplot(fn):
     fn = np.vectorize(fn)
     lo, hi, dpu = 0, 10, 10
@@ -185,3 +279,69 @@ def xplot(fn):
     zi = np.fromfunction(lambda x, y: fn(x/dpu, y/dpu), (N, N))
     plt.pcolor(xi, yi, zi, cmap=mplt.cm.jet)
     plt.colorbar()
+
+def fixpointDist(N, P, asex=1, ster=1, prec=1e-12):
+    assert P < N
+    Q = N - 1 - P
+    a = 1
+    b = 1 if P else 0
+    c = 1 if Q else 0
+    n = a+b+c
+    a, b, c = a/n, b/n, c/n
+    while True:
+        an = 1/N * a + b
+        bn = P/N*asex * a
+        cn = Q/N*ster * a
+        n = an+bn+cn
+        an, bn, cn = an/n, bn/n, cn/n
+        if abs(an-a) < prec and abs(bn-b) < prec and abs(cn-c) < prec:
+            return an, bn, cn
+        else:
+            a, b, c = an, bn, cn
+def solveFixpointDist(N, P):
+    a, b, c = sympy.symbols('a b c')
+    Q = N-1-P
+    c0 = a+b+c-1
+    c1 = (1/N*a + b) - a*(a+b)
+    c2 = P/N*a - b*(a+b)
+    c3 = Q/N*a - c*(a+b)
+    x = sympy.solve((c0, c1, c2, c3), a, b, c)
+    return [y for y in x if y[2] < 1 and all(z >= 0 for z in y)]
+def plotBodyDists(Nmax, oviAsex=True, asexr=1, sterr=1, data=False):
+    x, y0, y1, y2, y3, y4 = [], [], [], [], [], []
+    xmo, ymo = [], []
+    title = ['Autozooid', 'Asexual non-auto', 'Non-asexual', 'Non-sexual']
+    for N in range(2, Nmax+1):
+        for P in range(int(oviAsex), N-(1-int(oviAsex))):
+            Q = N-1-P
+            a, b, c = fixpointDist(N, P, asexr, sterr)
+            x.append(N + (-.1 if oviAsex else .1))
+            y0.append(a)     # auto
+            y1.append(b)     # asexual non-auto, producing only auto
+            y2.append(c)     # non-asexual non-auto
+            y3.append(1-(b/P if oviAsex else c/Q)) # non-ovicell
+            for auto in range(2):
+                for asex in range(P+1):
+                    for ster in range(Q+1):
+                        ovi = a*auto + b*asex/max(1,P) + c*ster/max(1,Q)
+                        if not ovi: continue
+                        xmo.append(N)
+                        ymo.append(1-ovi)
+    ys = [y0, y1, y2, y3]
+    for i, y in enumerate(ys):
+        ax = plt.subplot(2, 3, i+1)
+        ax.scatter(x, y)
+        plt.title(title[i])
+        plt.ylim((0, 1))
+        for j in range(len(y)):
+            ax.annotate(j, (x[j], y[j]))
+    if data:
+        with open('data09.16.2010.txt') as f:
+            raw = [(int(x['polymorph.types']), float(x['nrr'])) for 
+                   x in csv.DictReader(f, delimiter='\t') if 
+                   x['Phylum'] == 'Bryozoa' and x['nrr'] != 'NA' and int(x['polymorph.types']) > 1]
+        ax.scatter([x+random.normalvariate(0, 0.1) for x, _ in raw], [x for _, x in raw], c='black', marker='.')
+    ax = plt.subplot(2, 3, 5)
+    plt.title('Non-sexual (multiple sexual types possible)')
+    plt.ylim((0,1))
+    ax.scatter(xmo, ymo)
