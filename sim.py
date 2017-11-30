@@ -354,3 +354,274 @@ def plotBodyDists(Nmax, maxA=1, data=False, onlyAsex=False):
                    x in csv.DictReader(f, delimiter='\t') if 
                    x['Phylum'] == 'Bryozoa' and x['nrr'] != 'NA' and int(x['polymorph.types']) > 1]
         ax.scatter([x+random.normalvariate(0, 0.1) for x, _ in raw], [x for _, x in raw], c='black', marker='.')
+
+def bitstr(l):
+    return ''.join('1' if x else '0' for x in l)
+
+class BryParams:
+    def __init__(self):
+        self.feed = 0.1
+        self.asex = 1
+        self.sex = 1
+        self.cost = 0.25
+        self.copy = 0.01
+        self.change = 0.1
+bryPm = BryParams()
+
+class BrySpecies:
+    def __init__(self, mutateFrom=None):
+        if mutateFrom is None:
+            self.topo = [[True]]
+            self.sex = [True]
+            self.lineage = None
+        else:
+            while True:
+                self.topo = [x[:] for x in mutateFrom.topo]
+                self.sex = mutateFrom.sex[:]
+                if random.uniform(0, 1) < bryPm.copy:
+                    # copy type
+                    i = random.randint(0, len(self.sex)-1)
+                    self.topo.append(self.topo[i][:])
+                    for l in self.topo:
+                        l.append(l[i])
+                    self.sex.append(self.sex[i])
+                elif random.uniform(0, 1) < bryPm.change:
+                    # mutate attribute
+                    N = len(self.sex)
+                    i = random.randint(0, N*(N+1)-1)
+                    if i < N:
+                        self.sex[i] ^= True
+                    else:
+                        i -= N
+                        self.topo[i%N][i//N] ^= True
+                self.minimize()
+                if any(self.sex):
+                    break
+            self.lineage = mutateFrom
+        assert len(self.topo) == len(self.sex)
+        assert len(self.topo) == len(self.topo[0])
+    def minimize(self):
+        reach = set()
+        self.reach(0, reach)
+        unreach = list(set(range(len(self.sex))) - reach)
+        unreach.sort()
+        unreach.reverse()
+        for i in unreach:
+            self.sex.pop(i)
+            self.topo.pop(i)
+            for l in self.topo:
+                l.pop(i)
+    def reach(self, i, reach):
+        if i in reach: return
+        reach.add(i)
+        for j in range(len(self.topo[i])):
+            if self.topo[i][j]:
+                self.reach(j, reach)
+    def asexFreq(self):
+        if all(self.sex): return 0
+        N = len(self.sex)
+        CYCLE = 1
+        freq = [[1/N for _ in self.sex]]
+        freqPer = [0 for _ in self.sex]
+        c = 0
+        while True:
+            c += 1
+            if c > 1000:
+                CYCLE += 1
+                c = 0
+                print(CYCLE, self.sex, self.topo)
+            for i in range(N):
+                s = sum(self.topo[i])
+                freqPer[i] = freq[-1][i]/s if s else 0
+            nfreq = []
+            for i in range(N):
+                nfreq.append(sum(self.topo[j][i]*freqPer[j] for j in range(N)))
+            s = sum(nfreq)
+            if not s: return -1 
+            nfreq = [x/s for x in nfreq]
+            for j in range(len(freq)):
+                if all(abs(nfreq[i]-freq[j][i]) < 1e-9 for i in range(N)):
+                    s = 0
+                    for k in range(j, len(freq)):
+                        s += sum(x for i, x in enumerate(freq[k]) if not self.sex[i])
+                    s /= len(freq)-j
+                    return s
+            if len(freq) == CYCLE:
+                for j in range(len(freq)-1):
+                    freq[j] = freq[j+1]
+                freq.pop()
+            freq.append(nfreq)
+    def __str__(self):
+        return (bitstr(self.sex) + ' ' + 
+                ' '.join(bitstr(x) for x in self.topo) + ' ' +
+                '%.2f'%self.asexFreq())
+
+class BryAnimal:
+    def __init__(self, colony, btype, x, y):
+        self.colony = colony
+        species = colony.species
+        self.asex = species.topo[btype]
+        self.sex = species.sex[btype]
+        self.x = x
+        self.y = y
+    def act(self, energy, hasSpace):
+        if energy >= bryPm.asex and hasSpace and any(self.asex):
+            i = random.choice([j for j in range(len(self.asex)) if self.asex[j]])
+            return bryPm.asex, i, None
+        elif energy >= bryPm.sex and self.sex:
+            return bryPm.sex, None, BrySpecies(self.colony.species)
+        return 0, None, None
+    def die(self, board):
+        board.remove(self.x, self.y)
+
+class BryColony:
+    def __init__(self, species, x, y):
+        self.species = species
+        founder = BryAnimal(self, 0, x, y)
+        self.animals = [founder]
+        self.energy = 0
+    def feed(self, unitEnergy):
+        self.energy += sum(unitEnergy * (bryPm.cost if ani.sex else 1) for 
+                           ani in self.animals)
+    def act(self, board):
+        eggs, newa = [], []
+        anis = self.animals[:]
+        random.shuffle(anis)
+        for i, ani in enumerate(anis):
+            z = board.random(ani.x, ani.y, 1)
+            used, clone, egg = ani.act(self.energy / (len(self.animals)-i), z is not None)
+            self.energy -= used
+            if clone is not None:
+                x, y = z
+                clone = BryAnimal(self, clone, x, y)
+                board.insert(x, y, clone)
+                newa.append(clone)
+            if egg is not None:
+                eggs.append((egg, ani.x, ani.y, self.asexFreq()))
+        self.animals.extend(newa)
+        return eggs
+    def size(self):
+        return len(self.animals)
+    def asexFreq(self):
+        return 1 - sum(a.sex for a in self.animals)/len(self.animals)
+    def die(self, board):
+        for ani in self.animals:
+            ani.die(board)
+    def __str__(self):
+        return '%3d %s'%(self.size(), str(self.species))
+
+class BryBoard:
+    def __init__(self, X, Y):
+        self.cells = [[None for _ in range(X)] for _ in range(Y)]
+        self.N = 0
+        self.M = X*Y
+    def modxy(self, x, y):
+        return x % len(self.cells[0]), y % len(self.cells)
+    def cell(self, x, y):
+        x, y = self.modxy(x, y)
+        return self.cells[y][x]
+    def insert(self, x, y, ani):
+        x, y = self.modxy(x, y)
+        assert self.cells[y][x] is None
+        self.cells[y][x] = ani
+        self.N += 1
+    def remove(self, x, y):
+        x, y = self.modxy(x, y)
+        assert self.cells[y][x] is not None
+        self.cells[y][x] = None
+        self.N -= 1
+    def random(self, x, y, r):
+        if self.full(): return None
+        rows = list(range(y-r, y+r+1))
+        while len(rows):
+            i = random.randint(0, len(rows)-1)
+            b = rows[i] % len(self.cells)
+            rows.pop(i)
+            row = self.cells[b]
+            space = [a % len(row) for a in range(x-r, x+r+1) if row[a % len(row)] is None]
+            if not space: continue
+            a = random.choice(space)
+            return a, b
+        return None
+    def size(self):
+        return self.M
+    def full(self):
+        return self.N == self.M
+    def density(self):
+        return self.N / self.M
+    def clear(self):
+        for y in self.cells:
+            for i in range(len(y)):
+                y[i] = None
+        self.N = 0
+    def __str__(self):
+        return '\n'.join(''.join(' ' if x is None else 'o' for x in y) for y in self.cells)
+        
+class BrySim:
+    def __init__(self, X=51, Y=51, R=None):
+        self.X = X
+        self.Y = Y
+        self.board = BryBoard(X, Y)
+        if R is None: R = X // 2
+        self.eggRad = R
+        self.colonies = [BryColony(BrySpecies(), 0, 0)]
+        self.board.insert(0, 0, self.colonies[0].animals[0])
+        self.thrAsexFreq = []
+        self.empAsexFreq = []
+    def run(self, steps=1000, repop=10):
+        for st in range(steps):
+            for c in self.colonies:
+                c.feed(bryPm.feed)
+            eggs = []
+            for c in self.colonies:
+                eggs.extend(c.act(self.board))
+            random.shuffle(eggs)
+            eggs = eggs[0:min(len(eggs), repop)]
+            if eggs:
+                af = [(egg.asexFreq(), caf) for egg, _, _, caf in eggs]
+                af = [x for x in af if x[0] != -1]
+                if af: 
+                    self.thrAsexFreq.append(sum(x for x, _ in af)/len(af))
+                    self.empAsexFreq.append(sum(x for _, x in af)/len(af))
+            cleared = False
+            while True:
+                unique = set()
+                for egg, x, y, _ in eggs:
+                    z = self.board.random(x, y, self.eggRad)
+                    if z is None: break
+                    a, b = z
+                    colony = BryColony(egg, a, b)
+                    self.board.insert(a, b, colony.animals[0])
+                    self.colonies.append(colony)
+                    if cleared: unique.add(str(colony.species))
+                if cleared: print('\n'.join(list(unique)))
+                if self.board.full() and eggs:
+                    cs = [c.size() for c in self.colonies]
+                    print('Repopulating with %d (%d %d %.0f)'%(
+                            len(eggs), len(self.colonies), max(cs), sum(cs)/len(cs)))
+                    self.board.clear()
+                    self.colonies.clear()
+                    cleared = True
+                else:
+                    break
+        plt.plot(self.thrAsexFreq)
+        plt.plot(self.empAsexFreq)
+    def size2colonies(self):
+        sz2cs = {}
+        for c in self.colonies:
+            if c.size() not in sz2cs: sz2cs[c.size()] = []
+            sz2cs[c.size()].append(c)
+        css = list(sz2cs.items())
+        css.sort()
+        css.reverse()
+        return css
+    def analyze(self):
+        css = self.size2colonies()
+        big = css[0][0]
+        for sz, cs in css:
+            if sz < big/2:
+                print(sz, len(cs))
+            else:
+                for c in cs:
+                    print(str(c))
+                print()
