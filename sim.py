@@ -363,9 +363,11 @@ class BryParams:
         self.feed = 0.1
         self.asex = 1
         self.sex = 1
+        self.sexAsex = 0.5
         self.cost = 0.25
         self.copy = 0.01
         self.change = 0.1
+        self.repop = 10
 bryPm = BryParams()
 
 class BrySpecies:
@@ -429,7 +431,7 @@ class BrySpecies:
             if c > 1000:
                 CYCLE += 1
                 c = 0
-                print(CYCLE, self.sex, self.topo)
+                #print(CYCLE, self.sex, self.topo)
             for i in range(N):
                 s = sum(self.topo[i])
                 freqPer[i] = freq[-1][i]/s if s else 0
@@ -465,10 +467,15 @@ class BryAnimal:
         self.x = x
         self.y = y
     def act(self, energy, hasSpace):
-        if energy >= bryPm.asex and hasSpace and any(self.asex):
+        canAsex = energy >= bryPm.asex and hasSpace and any(self.asex)
+        canSex = energy >= bryPm.sex and self.sex
+        if canAsex and canSex:
+            canSex = random.uniform(0, 1) <= bryPm.sexAsex
+            canAsex = not canSex
+        if canAsex:
             i = random.choice([j for j in range(len(self.asex)) if self.asex[j]])
             return bryPm.asex, i, None
-        elif energy >= bryPm.sex and self.sex:
+        if canSex:
             return bryPm.sex, None, BrySpecies(self.colony.species)
         return 0, None, None
     def die(self, board):
@@ -511,10 +518,12 @@ class BryColony:
         return '%3d %s'%(self.size(), str(self.species))
 
 class BryBoard:
-    def __init__(self, X, Y):
+    def __init__(self, X, Y, uniform=False):
         self.cells = [[None for _ in range(X)] for _ in range(Y)]
         self.N = 0
         self.M = X*Y
+        self.uniform = uniform
+        if uniform: self.clear()
     def modxy(self, x, y):
         return x % len(self.cells[0]), y % len(self.cells)
     def cell(self, x, y):
@@ -525,13 +534,22 @@ class BryBoard:
         assert self.cells[y][x] is None
         self.cells[y][x] = ani
         self.N += 1
+        if self.uniform: 
+            if (x, y) == self.empty[-1]:
+                self.empty.pop()
+            else:
+                self.uniform = False
     def remove(self, x, y):
         x, y = self.modxy(x, y)
         assert self.cells[y][x] is not None
         self.cells[y][x] = None
         self.N -= 1
+        if self.uniform: 
+            self.uniform = False
     def random(self, x, y, r):
         if self.full(): return None
+        if self.uniform:
+            return self.empty[-1]
         rows = list(range(y-r, y+r+1))
         while len(rows):
             i = random.randint(0, len(rows)-1)
@@ -554,6 +572,11 @@ class BryBoard:
             for i in range(len(y)):
                 y[i] = None
         self.N = 0
+        if self.uniform:
+            self.empty = [(i, j) for 
+                          i in range(len(self.cells)) for 
+                          j in range(len(self.cells[0]))]
+            random.shuffle(self.empty)
     def __str__(self):
         return '\n'.join(''.join(' ' if x is None else 'o' for x in y) for y in self.cells)
         
@@ -561,28 +584,31 @@ class BrySim:
     def __init__(self, X=51, Y=51, R=None):
         self.X = X
         self.Y = Y
-        self.board = BryBoard(X, Y)
+        self.board = BryBoard(X, Y, uniform = R is None)
         if R is None: R = X // 2
         self.eggRad = R
         self.colonies = [BryColony(BrySpecies(), 0, 0)]
-        self.board.insert(0, 0, self.colonies[0].animals[0])
+        x, y = self.board.random(0, 0, self.eggRad)
+        self.board.insert(x, y, self.colonies[0].animals[0])
         self.thrAsexFreq = []
         self.empAsexFreq = []
-    def run(self, steps=1000, repop=10):
+        self.fillTime = []
+        self.meanAF = []
+        self.unwMeanAF = []
+        self.meanCS = []
+        self.stdCS = []
+        self.meanNBT = []
+    def run(self, steps=1000):
+        fillTime = 0
         for st in range(steps):
+            fillTime += 1
             for c in self.colonies:
                 c.feed(bryPm.feed)
             eggs = []
             for c in self.colonies:
                 eggs.extend(c.act(self.board))
             random.shuffle(eggs)
-            eggs = eggs[0:min(len(eggs), repop)]
-            if eggs:
-                af = [(egg.asexFreq(), caf) for egg, _, _, caf in eggs]
-                af = [x for x in af if x[0] != -1]
-                if af: 
-                    self.thrAsexFreq.append(sum(x for x, _ in af)/len(af))
-                    self.empAsexFreq.append(sum(x for _, x in af)/len(af))
+            eggs = eggs[0:min(len(eggs), bryPm.repop)]
             cleared = False
             while True:
                 unique = set()
@@ -597,15 +623,53 @@ class BrySim:
                 if cleared: print('\n'.join(list(unique)))
                 if self.board.full() and eggs:
                     cs = [c.size() for c in self.colonies]
-                    print('Repopulating with %d (%d %d %.0f)'%(
-                            len(eggs), len(self.colonies), max(cs), sum(cs)/len(cs)))
+                    nc = len(cs)
+                    mcs = np.mean(cs)
+                    sdcs = np.std(cs)
+                    afs = [c.asexFreq() for c in self.colonies]
+                    maf = sum(cs[i]*afs[i] for i in range(nc))/sum(cs)
+                    unwmaf = sum(afs)/nc
+                    nbt = [len(c.species.sex) for c in self.colonies]
+                    mnbt = sum(nbt)/nc
+                    print('Repopulating with %d (%d %d %.0f %.2f %.2f)'%(
+                            len(eggs), nc, max(cs), mcs, sdcs, maf))
                     self.board.clear()
                     self.colonies.clear()
                     cleared = True
                 else:
                     break
-        plt.plot(self.thrAsexFreq)
-        plt.plot(self.empAsexFreq)
+            if cleared:
+                assert eggs
+                af = [(egg.asexFreq(), caf) for egg, _, _, caf in eggs]
+                af = [x for x in af if x[0] != -1]
+                if af: 
+                    self.thrAsexFreq.append(sum(x for x, _ in af)/len(af))
+                    self.empAsexFreq.append(sum(x for _, x in af)/len(af))
+                    self.fillTime.append(fillTime)
+                    self.meanAF.append(maf)
+                    self.unwMeanAF.append(unwmaf)
+                    self.meanCS.append(mcs)
+                    self.stdCS.append(sdcs)
+                    self.meanNBT.append(mnbt)
+                fillTime = 0
+    def plot(self):
+        fig = plt.figure()
+        ax = plt.subplot(2, 2, 1)
+        ax.plot(self.thrAsexFreq)
+        ax.plot(self.empAsexFreq)
+        ax.plot(self.meanAF)
+        ax.plot(self.unwMeanAF)
+        ax.set_title('Limit/empirical egg & wght/unwght mean colony asex freq')
+        ax = plt.subplot(2, 2, 2)
+        ax.plot(self.fillTime)
+        ax.set_title('Sim cycles to fill')
+        ax = plt.subplot(2, 2, 4)
+        ax.plot(self.meanCS)
+        ax.plot(self.stdCS)
+        ax.set_title('Mean/std colony size')
+        ax = plt.subplot(2, 2, 3)
+        ax.plot(self.meanNBT)
+        ax.set_title('Mean colony num body types')
     def size2colonies(self):
         sz2cs = {}
         for c in self.colonies:
