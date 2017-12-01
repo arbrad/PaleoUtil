@@ -363,8 +363,8 @@ class BryParams:
         self.feed = 0.1
         self.asex = 1
         self.sex = 1
-        self.sexAsex = 0.5
-        self.cost = 0.25
+        self.sexAsex = 0   # prob of sex if both sex/asex possible; another cost
+        self.cost = 0.5
         self.copy = 0.01
         self.change = 0.1
         self.repop = 10
@@ -500,6 +500,8 @@ class BryColony:
             self.energy -= used
             if clone is not None:
                 x, y = z
+                assert ani.x == 0 or ani.x == len(board.cells[0])-1 or abs(ani.x-x) <= 1 
+                assert ani.y == 0 or ani.y == len(board.cells)-1 or  abs(ani.y-y) <= 1
                 clone = BryAnimal(self, clone, x, y)
                 board.insert(x, y, clone)
                 newa.append(clone)
@@ -522,8 +524,6 @@ class BryBoard:
         self.cells = [[None for _ in range(X)] for _ in range(Y)]
         self.N = 0
         self.M = X*Y
-        self.uniform = uniform
-        if uniform: self.clear()
     def modxy(self, x, y):
         return x % len(self.cells[0]), y % len(self.cells)
     def cell(self, x, y):
@@ -534,33 +534,29 @@ class BryBoard:
         assert self.cells[y][x] is None
         self.cells[y][x] = ani
         self.N += 1
-        if self.uniform: 
-            if (x, y) == self.empty[-1]:
-                self.empty.pop()
-            else:
-                self.uniform = False
     def remove(self, x, y):
         x, y = self.modxy(x, y)
         assert self.cells[y][x] is not None
         self.cells[y][x] = None
         self.N -= 1
-        if self.uniform: 
-            self.uniform = False
+    def space(self):
+        sp = []
+        for j, r in enumerate(self.cells):
+            for i in range(len(r)):
+                if r[i] is None:
+                    sp.append((i, j))
+        return sp
     def random(self, x, y, r):
         if self.full(): return None
-        if self.uniform:
-            return self.empty[-1]
-        rows = list(range(y-r, y+r+1))
-        while len(rows):
-            i = random.randint(0, len(rows)-1)
-            b = rows[i] % len(self.cells)
-            rows.pop(i)
-            row = self.cells[b]
-            space = [a % len(row) for a in range(x-r, x+r+1) if row[a % len(row)] is None]
-            if not space: continue
-            a = random.choice(space)
-            return a, b
-        return None
+        sp = []
+        for j in range(y-r, y+r+1):
+            b = j % len(self.cells)
+            for i in range(x-r, x+r+1):
+                a = i % len(self.cells[b])
+                if self.cells[b][a] is None:
+                    sp.append((a, b))
+        if not sp: return None
+        return random.choice(sp)
     def size(self):
         return self.M
     def full(self):
@@ -572,11 +568,6 @@ class BryBoard:
             for i in range(len(y)):
                 y[i] = None
         self.N = 0
-        if self.uniform:
-            self.empty = [(i, j) for 
-                          i in range(len(self.cells)) for 
-                          j in range(len(self.cells[0]))]
-            random.shuffle(self.empty)
     def __str__(self):
         return '\n'.join(''.join(' ' if x is None else 'o' for x in y) for y in self.cells)
         
@@ -584,12 +575,10 @@ class BrySim:
     def __init__(self, X=51, Y=51, R=None):
         self.X = X
         self.Y = Y
-        self.board = BryBoard(X, Y, uniform = R is None)
-        if R is None: R = X // 2
+        self.board = BryBoard(X, Y)
         self.eggRad = R
         self.colonies = [BryColony(BrySpecies(), 0, 0)]
-        x, y = self.board.random(0, 0, self.eggRad)
-        self.board.insert(x, y, self.colonies[0].animals[0])
+        self.board.insert(0, 0, self.colonies[0].animals[0])
         self.thrAsexFreq = []
         self.empAsexFreq = []
         self.fillTime = []
@@ -598,7 +587,7 @@ class BrySim:
         self.meanCS = []
         self.stdCS = []
         self.meanNBT = []
-    def run(self, steps=1000):
+    def run(self, steps=1000, verbose=False):
         fillTime = 0
         for st in range(steps):
             fillTime += 1
@@ -612,15 +601,24 @@ class BrySim:
             cleared = False
             while True:
                 unique = set()
+                if self.eggRad is None:
+                    space = self.board.space()
+                    if len(space) > bryPm.repop:
+                        space = random.sample(space, bryPm.repop)
                 for egg, x, y, _ in eggs:
-                    z = self.board.random(x, y, self.eggRad)
-                    if z is None: break
-                    a, b = z
+                    if self.eggRad is None:
+                        if not space: break
+                        a, b = space[-1]
+                        space.pop()
+                    else:
+                        z = self.board.random(x, y, self.eggRad)
+                        if z is None: break
+                        a, b = z
                     colony = BryColony(egg, a, b)
                     self.board.insert(a, b, colony.animals[0])
                     self.colonies.append(colony)
                     if cleared: unique.add(str(colony.species))
-                if cleared: print('\n'.join(list(unique)))
+                if verbose and cleared: print('\n'.join(list(unique)))
                 if self.board.full() and eggs:
                     cs = [c.size() for c in self.colonies]
                     nc = len(cs)
@@ -631,8 +629,9 @@ class BrySim:
                     unwmaf = sum(afs)/nc
                     nbt = [len(c.species.sex) for c in self.colonies]
                     mnbt = sum(nbt)/nc
-                    print('Repopulating with %d (%d %d %.0f %.2f %.2f)'%(
-                            len(eggs), nc, max(cs), mcs, sdcs, maf))
+                    if verbose:
+                        print('Repopulating with %d (%d %d %.0f %.2f %.2f)'%(
+                                len(eggs), nc, max(cs), mcs, sdcs, maf))
                     self.board.clear()
                     self.colonies.clear()
                     cleared = True
@@ -659,9 +658,11 @@ class BrySim:
         ax.plot(self.empAsexFreq)
         ax.plot(self.meanAF)
         ax.plot(self.unwMeanAF)
-        ax.set_title('Limit/empirical egg & wght/unwght mean colony asex freq')
+        plt.ylim((0, 1))
+        ax.set_title('Limit/empirical egg & wght/unwght mean colony asex freq (%.2f %.2f)'%(bryPm.cost, bryPm.sexAsex))
         ax = plt.subplot(2, 2, 2)
         ax.plot(self.fillTime)
+        plt.ylim((0, 200))
         ax.set_title('Sim cycles to fill')
         ax = plt.subplot(2, 2, 4)
         ax.plot(self.meanCS)
@@ -669,6 +670,7 @@ class BrySim:
         ax.set_title('Mean/std colony size')
         ax = plt.subplot(2, 2, 3)
         ax.plot(self.meanNBT)
+        plt.ylim((1, 8))
         ax.set_title('Mean colony num body types')
     def size2colonies(self):
         sz2cs = {}
@@ -689,3 +691,39 @@ class BrySim:
                 for c in cs:
                     print(str(c))
                 print()
+
+def runSims(iters, costs, attr='cost'):
+    sims = []
+    for cost in costs:
+        setattr(bryPm, attr, cost)
+        sim = BrySim()
+        sim.run(iters)
+        sim.plot()
+        sims.append(sim)
+    return sims
+
+def runManySims(N, iters, costs, attr='cost'):
+    records = ['thrAsexFreq', 'empAsexFreq', 'meanAF', 'unwMeanAF']
+    r2cm = {rec:[] for rec in records}
+    for i in range(N):
+        for cost in costs:
+            print('%2d %.2f'%(i, cost))
+            setattr(bryPm, attr, cost)
+            sim = BrySim()
+            sim.run(iters)
+            for rec in records:
+                x = getattr(sim, rec)
+                x = x[len(x)//2:]
+                x = np.mean(x)
+                r2cm[rec].append((cost, x))
+    return r2cm
+def plotBryStats(r2cm):
+    plt.figure()
+    jitter = []
+    for _, xy in r2cm.items():
+        if not jitter:
+            xs = set(x for x, _ in xy)
+            jitter = list(np.linspace(-.02, .02, len(xy)/len(xs)))
+        x, y = [a+jitter[i%len(jitter)] for i, (a, _) in enumerate(xy)], [a for _, a in xy]
+        plt.scatter(x, y)
+                
