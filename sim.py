@@ -368,6 +368,7 @@ class BryParams:
         self.copy = 0.01
         self.change = 0.1
         self.repop = 10
+        self.star = False
 bryPm = BryParams()
 
 class BrySpecies:
@@ -396,12 +397,18 @@ class BrySpecies:
                     else:
                         i -= N
                         self.topo[i%N][i//N] ^= True
+                if bryPm.star: self.makeStar()
                 self.minimize()
                 if any(self.sex):
                     break
             self.lineage = mutateFrom
         assert len(self.topo) == len(self.sex)
         assert len(self.topo) == len(self.topo[0])
+    def makeStar(self):
+        for i in range(len(self.topo)):
+            self.topo[0][i] = True
+            for j in range(1, len(self.topo)):
+                self.topo[i][j] = False
     def minimize(self):
         reach = set()
         self.reach(0, reach)
@@ -453,6 +460,11 @@ class BrySpecies:
                     freq[j] = freq[j+1]
                 freq.pop()
             freq.append(nfreq)
+    def star(self):
+        notstar = len(self.topo)-sum(self.topo[0])
+        for row in self.topo[1:]:
+            notstar += sum(row[1:])
+        return notstar / len(self.topo)**2
     def __str__(self):
         return (bitstr(self.sex) + ' ' + 
                 ' '.join(bitstr(x) for x in self.topo) + ' ' +
@@ -579,14 +591,20 @@ class BrySim:
         self.eggRad = R
         self.colonies = [BryColony(BrySpecies(), 0, 0)]
         self.board.insert(0, 0, self.colonies[0].animals[0])
-        self.thrAsexFreq = []
-        self.empAsexFreq = []
+        # asex freq
+        self.thrAsexFreq = []  # species limit (eggs)
+        self.empAsexFreq = []  # colony empirical (eggs)
+        self.meanAF = []       # weighted colony empirical
+        self.unwMeanAF = []    # unweighted 
+        # clear->full cycles
         self.fillTime = []
-        self.meanAF = []
-        self.unwMeanAF = []
+        # colony size
         self.meanCS = []
         self.stdCS = []
+        # body types
         self.meanNBT = []
+        # non-star
+        self.meanStar = []
     def run(self, steps=1000, verbose=False):
         fillTime = 0
         for st in range(steps):
@@ -629,9 +647,11 @@ class BrySim:
                     unwmaf = sum(afs)/nc
                     nbt = [len(c.species.sex) for c in self.colonies]
                     mnbt = sum(nbt)/nc
+                    star = [c.species.star() for c in self.colonies]
+                    mstar = sum(star)/nc
                     if verbose:
-                        print('Repopulating with %d (%d %d %.0f %.2f %.2f)'%(
-                                len(eggs), nc, max(cs), mcs, sdcs, maf))
+                        print('Repopulating with %d (%d %d %.0f %.2f %.2f %.2f)'%(
+                                len(eggs), nc, max(cs), mcs, sdcs, maf, mstar))
                     self.board.clear()
                     self.colonies.clear()
                     cleared = True
@@ -650,6 +670,7 @@ class BrySim:
                     self.meanCS.append(mcs)
                     self.stdCS.append(sdcs)
                     self.meanNBT.append(mnbt)
+                    self.meanStar.append(mstar)
                 fillTime = 0
     def plot(self):
         fig = plt.figure()
@@ -658,8 +679,9 @@ class BrySim:
         ax.plot(self.empAsexFreq)
         ax.plot(self.meanAF)
         ax.plot(self.unwMeanAF)
+        ax.plot(self.meanStar)
         plt.ylim((0, 1))
-        ax.set_title('Limit/empirical egg & wght/unwght mean colony asex freq (%.2f %.2f)'%(bryPm.cost, bryPm.sexAsex))
+        ax.set_title('Lmt/emp egg & wght/unwght mn col asex freq, star (%.2f %.2f)'%(bryPm.cost, bryPm.sexAsex))
         ax = plt.subplot(2, 2, 2)
         ax.plot(self.fillTime)
         plt.ylim((0, 200))
@@ -670,7 +692,7 @@ class BrySim:
         ax.set_title('Mean/std colony size')
         ax = plt.subplot(2, 2, 3)
         ax.plot(self.meanNBT)
-        plt.ylim((1, 8))
+        plt.ylim((1, max(7, math.ceil(max(self.meanNBT)))))
         ax.set_title('Mean colony num body types')
     def size2colonies(self):
         sz2cs = {}
@@ -702,8 +724,8 @@ def runSims(iters, costs, attr='cost'):
         sims.append(sim)
     return sims
 
+records = ['thrAsexFreq', 'empAsexFreq', 'meanAF', 'unwMeanAF']
 def runManySims(N, iters, costs, attr='cost'):
-    records = ['thrAsexFreq', 'empAsexFreq', 'meanAF', 'unwMeanAF']
     r2cm = {rec:[] for rec in records}
     for i in range(N):
         for cost in costs:
@@ -720,7 +742,8 @@ def runManySims(N, iters, costs, attr='cost'):
 def plotBryStats(r2cm):
     plt.figure()
     jitter = []
-    for _, xy in r2cm.items():
+    for rec in records:
+        xy = r2cm[rec]
         if not jitter:
             xs = set(x for x, _ in xy)
             jitter = list(np.linspace(-.02, .02, len(xy)/len(xs)))
